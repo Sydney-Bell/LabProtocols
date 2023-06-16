@@ -1,0 +1,268 @@
+#########################################################
+#need to re-run samples
+1-6_TCAC.trim = 72.2 PCLI
+1-7_TCAC.trim = 72.3 PCLI
+rtt_48.trim   OFAV
+rtt_49.trim   PCLI
+
+########################################################
+cd 2bRAD_RTT
+cd highQualityReads
+cp rtt_48.trim* ~/2bRAD_RTT/ofav/ofavTrimmedReads/REsymbionts
+cp rtt_49.trim* ~/2bRAD_RTT/pcli/pcliTrimmedReads/REsams
+cp 1-6_TCAC.trim* ~/2bRAD_RTT/pcli/pcliTrimmedReads/REsams
+cp 1-7_TCAC.trim* ~/2bRAD_RTT/pcli/pcliTrimmedReads/REsams
+
+mv 1-6_TCAC.trimlog.txt rtt_72_2.trimlog.txt
+mv 1-6_TCAC.trim rtt_72_2.trim
+mv 1-7_TCAC.trimlog.txt rtt_72_3.trimlog.txt
+mv 1-7_TCAC.trim rtt_72_3.trim
+
+### FROM NOW ON NEED TO DO EVERYTHING IN TRIPLICATE FOR EACH SPECIES
+
+#Mapping reads to concatenated Symbiodinaceae genome
+mkdir REsams
+SYMGENOME=~/bin/symGenomes/concatZooxGenomes
+
+#Index
+cd ~/bin/symGenomes
+echo "bowtie2-build concatZooxGenomes.fasta.gz concatZooxGenomes" > bowtie2-build
+launcher_creator.py -j bowtie2-build -n bowtie2-build -q shortq7 -t 06:00:00 -e sydneybell2021@fau.edu
+module load bowtie2-2.3.5.1-gcc-8.3.0-63cvhw5
+sbatch --mem=200GB bowtie2-build.slurm
+gunzip concatZooxGenomes.fasta.gz
+module load samtools-1.10-gcc-8.3.0-khgksad
+srun samtools faidx concatZooxGenomes.fasta
+
+*** NEED to run without .fasta at the end ... should just be concatZooxGenomes ***
+
+2bRAD_bowtie2_launcher.py -g ~/bin/symGenomes/concatZooxGenomes -f .trim -n REzooxMaps --split -u un -a REzoox --aldir ./REzoox --undir ./REunaligned --launcher -e sydneybell2021@fau.edu
+sbatch REzooxMaps.slurm
+
+#Checking Symbiodiniaceae read mapping rates
+>zooxAlignmentRates
+for F in `ls *.REzoox`; do
+M=`grep -E '^[ATGCN]+$' $F | wc -l | grep -f - REzooxMaps.e* -A 4 | tail -1 | perl -pe 's/REzooxMaps\.e\d+-|% overall alignment rate//g'` ;
+echo "$F.sam $M">>zooxAlignmentRates;
+done
+
+# ls *trim | cut -d '.' -f 1 >align1
+# grep "% overall" REzooxMaps.e* | cut -d ' ' -f 1 >align2
+# paste <(awk -F' ' '{print $1}' align1) <(awk -F' ' '{print $1}' align2) >zooxAlignmentRates
+# rm align1 align2
+
+less zooxAlignmentRates
+
+### PCLI ###########################################################
+#seperate un and sam files into directories
+#Make unaligned directory
+cd ____TrimmedReads
+mkdir REzoox
+cp *.sam REzoox/
+cp *.un REunaligned/
+
+zipper.py -f .trim -a -9 --launcher -e sydneybell2021@fau.edu
+sbatch --mem=200GB zip.slurm
+
+# Uniquing reads
+
+cd pcliTrimmedReads
+ls *.trim.un | perl -pe 's/^(.+)$/uniquerOne.pl $1 >$1\.uni/' > unique
+
+launcher_creator.py -j unique -n unique -q shortq7 -t 06:00:00 -e sydneybell2021@fau.edu
+sbatch --mem=200GB unique.slurm
+
+# Checking there is a .uni for all samples (*56 IS MISSING)
+
+ls -l *.uni | wc -l
+
+### Collecting common tags (major alleles).
+# Merging uniqued files (set minInd to >10, or >10% of total number of samples, whichever is greater).
+
+echo 'mergeUniq.pl uni minInd=13 > all.uniq' > allunique
+
+launcher_creator.py -j allunique -n allunique -q shortq7 -t 06:00:00 -e sydneybell2021@fau.edu
+sbatch --mem=200GB allunique.slurm
+
+#Discarding tags that have more than 7 observations without reverse-complement
+srun awk '!($3>7 && $4==0) && $2!="seq"' all.uniq >all.tab
+
+#Creating fasta file out of merged and filtered tags:
+srun awk '{print ">"$1"\n"$2}' all.tab >all.fasta
+
+#Clustering allowing for up to 3 mismatches (-c 0.91); the most abundant sequence becomes reference
+echo '#!/bin/bash' >cdhit
+echo cd-hit-est -i all.fasta -o cdh_alltags.fas -aL 1 -aS 1 -g 1 -c 0.91 -M 0 -T 0 >>cdhit
+sbatch --mem=200GB -e cdhit.e%j -o cdhit.o%j cdhit
+
+rm *.uni
+
+echo '#!/bin/bash' >krakendb.sh
+echo kraken2-build --download-taxonomy --db ~/bin/krakenDB >>krakendb.sh
+echo kraken2-build --download-library archaea --threads 16 --db ~/bin/krakenDB >>krakendb.sh
+echo kraken2-build --download-library bacteria --threads 16 --db ~/bin/krakenDB >>krakendb.sh
+echo kraken2-build --download-library viral --threads 16 --db ~/bin/krakenDB >>krakendb.sh
+echo kraken2-build --download-library human --threads 16 --db ~/bin/krakenDB >>krakendb.sh
+echo kraken2-build --download-library fungi --threads 16 --db ~/bin/krakenDB >>krakendb.sh
+echo kraken2-build --download-library protozoa --threads 16 --db ~/bin/krakenDB >>krakendb.sh
+echo kraken2-build --download-library UniVec_Core --threads 16 --db ~/bin/krakenDB >>krakendb.sh
+
+sbatch --mem=200GB -p longq7 -e krakenDB.e%j -o krakenDB.o%j krakendb.sh
+# Finally, build the database
+```{bash, kraken build}
+echo '#!/bin/bash' >kdbBuild
+echo kraken2-build --download-taxonomy --threads 16 --db /mnt/beegfs/home/sydneybell2021/bin/krakenDB >>kdbBuild
+echo kraken2-build --build --db ~/bin/krakenDB >>kdbBuild
+sbatch --mem=200GB -o kdbBuild.o%j -e kdbBuild.e%j kdbBuild
+
+#Remove potential contamination from reference
+cd ~/2bRAD_RTT/pcli/pcliTrimmedReads
+
+echo '#!/bin/bash' >krakenDB
+echo kraken2 --db ~/bin/krakenDB cdh_alltags.fas --threads 16 --classified-out cdh_alltags.contam.fa --unclassified-out cdh_alltags.unclass.fa --report krakenDB.report --output krakenDB.out >>krakenDB
+
+sbatch --mem=200GB -o krakenDB.o%j -e krakenDB.e%j krakenDB
+
+### Construct denovo genome
+With 30 pseudo chromosomes from clean major allele tags
+mkdir ../REmappedReads
+mv cdh_alltags.unclass.fa ../REmappedReads
+cd ../REmappedReads
+
+# rename file
+mv cdh_alltags.unclass.fa pcli_denovo.fa
+
+
+concatFasta.pl fasta=pcli_denovo.fa num=30
+
+### Format pseudo genome
+GENOME_FASTA=pcli_denovo_cc.fasta
+
+echo '#!/bin/bash' >genomeBuild.sh
+echo bowtie2-build $GENOME_FASTA $GENOME_FASTA >>genomeBuild.sh
+echo samtools faidx $GENOME_FASTA >>genomeBuild.sh
+
+sbatch -o genomeBuild.o%j -e genomeBuild.e%j --mem=200GB genomeBuild.sh
+
+# MAPPING READS TO REFERENCE
+#Mapping reads to reference and formatting bam files
+
+#Map reads to fake genome:
+mv ../pcliTrimmedReads/*.un .
+mv ../pcliTrimmedReads/symbionts .
+
+GFASTA=pcli_denovo_cc
+
+2bRAD_bowtie2_launcher.py -f un -g $GFASTA --launcher -e sydneybell2021@fau.edu
+sbatch --mem=200GB maps.slurm
+
+#Do we have the right number of SAM files?
+ls *.sam | wc -l
+
+#Check alignment rates
+ls *un | cut -d '.' -f 1 >align1
+grep "% overall" maps.e* | cut -d ' ' -f 1 >align2
+>alignmentRates
+paste <(awk -F' ' '{print $1}' align1) <(awk -F' ' '{print $1}' align2) >alignmentRates
+rm align1 align2
+
+less alignmentRates
+
+# Convert SAM files to BAM files
+#BAM files will be used for genotyping, population structure, etc.
+>s2b
+for file in *.sam; do
+echo "samtools sort -O bam -o ${file/.sam/}.bam $file && samtools index ${file/.sam/}.bam">>s2b;
+done
+
+launcher_creator.py -j s2b -n s2b -q shortq7 -t 06:00:00 -e sydneybell2021@fau.edu
+sbatch --mem=200GB s2b.slurm
+
+```
+
+#Do we have enough BAM files?
+ls *bam | wc -l  # should be the same number as number of trim files
+
+#Clean up directory
+rm *.un
+
+
+### OFAV ################################################################
+
+#seperate un and sam files into directories
+#Make unaligned directory
+cd ofavTrimmedReads
+mkdir REsams
+cd REsams
+mkdir REunaligned
+mkdir REzoox
+
+#Copy trim file from highQualityReads to REsams
+cp rtt_48.trim* ~/2bRAD_RTT/ofav/ofavTrimmedReads/REsams
+cd REsams
+2bRAD_bowtie2_launcher.py -f trim -g ~/bin/OFAV_genome_Prada/ncbi_dataset/data/GCA_001896105.1/ofavGenome.fa --split -a zoox -u unal --undir ./REunaligned --aldir ./REzoox -n maps --launcher -e sydneybell2021@fau.edu
+
+
+cp *.sam ./REzoox
+cp *.un ./REunaligned
+
+cd /2bRAD_RTT/ofav/ofavTrimmedReads/REzoox
+mkdir REdualAligned
+mkdir REzooxOnly
+
+#In the zoox directory you will have fastq files that aligned to the zoox genomes, realign back to the OFAV genome and again split these reads up into aligned and unaligned. In this case only used the unaligned reads because then you will get rid of any potential dual-aligned reads to both MCAV and algal symbiont.
+2bRAD_bowtie2_launcher.py -f .zoox -g ~/bin/OFAV_genome_Prada/ncbi_dataset/data/GCA_001896105.1/ofavGenome --split -a dual -u REzooxOnly --undir ./REzooxOnly --aldir ./REdualAligned -n maps --launcher -e sydneybell2021@fau.edu
+sbatch maps.slurm
+
+#This makes zooxOnly sams
+cd REzooxOnly
+2bRAD_bowtie2_launcher.py -f trim.zoox.REzooxOnly -g ~/bin/OFAV_genome_Prada/ncbi_dataset/data/GCA_001896105.1/ofavGenome -n zooxOnlyMaps --launcher -e sydneybell2021@fau.edu
+sbatch zooxOnlyMaps.slurm
+
+#These sam files should now only have OFAV reads
+mkdir REofavSams
+cd REsams
+srun cp ./REunaligned/*.un ./REofavSams
+cd REofavSams
+2bRAD_bowtie2_launcher.py -f un -g ~/bin/OFAV_genome_Prada/ncbi_dataset/data/GCA_001896105.1/ofavGenome -n ofavMaps --launcher -e sydneybell2021@fau.edu
+
+mkdir REzooxSams
+mv ~/2bRAD_RTT/ofav/ofavTrimmedReads/REsams/REzoox/REzooxOnly/*.sam ~/2bRAD_RTT/ofav/ofavTrimmedReads/REsams/REzooxSams
+
+#Turn sams into bams
+cd ofavTrimmedReads
+mkdir REbams
+cd REbams
+mkdir REzooxBams
+srun cp ~/2bRAD_RTT/ofav/ofavTrimmedReads/REsams/REzooxSams/*sam ./REzooxBams
+
+#Compressing, sorting and indexing the SAM files, so they become BAM files:
+>s2b
+for file in *.sam; do
+echo "samtools sort -O bam -o ${file/.sam/}.bam $file && samtools index ${file/.sam/}.bam">>s2b;
+done
+
+launcher_creator.py -j s2b -n s2b -t 6:00:00 -e sydneybell2021@fau.edu -q shortq7
+sbatch s2b.slurm
+
+ls *bam >REzooxBams
+
+####
+
+mkdir REofavBams
+srun cp ./REsams/REofavSams/*.sam ./REbams/REofavBams
+
+#Compressing, sorting and indexing the SAM files, so they become BAM files:
+>s2b
+for file in *.sam; do
+echo "samtools sort -O bam -o ${file/.sam/}.bam $file && samtools index ${file/.sam/}.bam">>s2b;
+done
+
+launcher_creator.py -j s2b -n s2b -t 6:00:00 -e sydneybell2021@fau.edu -q shortq7
+sbatch s2b.slurm
+
+ls *bam >REbams
+
+cp rtt_48.trim.un.bt2.bam ~/2bRAD_RTT/ofav/ofavTrimmedReads/bams/ofavBams
+cp rtt_48.trim.un.bt2.sam ~/2bRAD_RTT/ofav/ofavTrimmedReads/bams/ofavBams
+cp rtt_48.trim.un.bt2.bam.bai ~/2bRAD_RTT/ofav/ofavTrimmedReads/bams/ofavBams

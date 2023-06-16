@@ -1,0 +1,1403 @@
+#Sydney's 2bRAD Protocol
+
+#Login to PUTTY
+koko-login.hpc.fau.edu
+sydneybell2021
+fishRBFFS!8
+
+#Making a .bashrc
+nano .bashrc
+
+#Copied require modules
+module load angsd-0.933-gcc-9.2.0-65d64pp
+module load bayescan-2.1-gcc-8.3.0-7gakqmd
+module load qt-5.15.2-gcc-9.2.0-zi7wcem BayeScEnv/1.1
+module load bcftools-1.9-gcc-8.3.0-il4d373
+module load bowtie2-2.3.5.1-gcc-8.3.0-63cvhw5
+module load cdhit-4.8.1-gcc-8.3.0-bcay75d
+module load htslib-1.9-gcc-8.3.0-jn7ehrc
+module load kraken2-2.1.1-gcc-9.2.0-ocivj3u
+module load python-3.7.4-gcc-8.3.0-3tniqr5
+module load launcher
+module load miniconda3-4.6.14-gcc-8.3.0-eenl5dj
+module load ncbi-toolkit-22_0_0-gcc-9.2.0-jjhd2wa
+module load ngsadmix-32-gcc-8.3.0-qbnwmpq
+module load ngsRelate/v2
+module load R/3.6.1
+module load samtools-1.10-gcc-8.3.0-khgksad
+module load vcftools-0.1.14-gcc-8.3.0-safy5vc
+
+
+#Downloading scripts
+cd ~/bin
+svn checkout https://github.com/RyanEckert/Stephanocoenia_FKNMS_PopGen/trunk/scripts/
+mv scripts/* .
+rm -r scripts
+
+wget http://www.cmpg.unibe.ch/software/PGDSpider/PGDSpider_2.0.7.1.zip
+unzip PGDSpider_2.0.7.1.zip
+rm PGDSpider_2.0.7.1.zip
+
+#Make all scripts executable
+
+chmod +x *.sh *.pl *.py
+
+#Only have to do this once but adding the path to the bin in my bashrc
+nano ~/.bashrc
+#Copy and paste this in your bashrc
+PATH="$HOME/bin:$PATH";
+export PATH="$HOME/bin:$PATH";
+#exit
+
+source ~/.bashrc
+echo $PATH
+
+
+#Made a project directory
+mkdir 2bRAD_RTT
+cd 2bRAD_RTT
+
+#Made a directory for raw reads
+mkdir rawreads
+
+#Downloading reads
+wget "https://launch.basespace.illumina.com/CLI/latest/amd64-linux/bs" -O $HOME/bin/bs
+chmod +x ~/bin/bs
+
+#Go to the website and confirm authorization by logging in to your basespace acct.
+bs auth
+
+#Making a script to download the reads and merge samples across 2 NovaSeq lanes
+
+
+echo '#!/bin/bash' > downloadReads.sh
+echo 'bs download project --concurrency=high -q -n JA22044 -o ~/2bRAD_RTT/rawreads' >> downloadReads.sh
+# -n is the project name and -o is the output directory
+
+echo "find . -name '*.gz' -exec mv {} . \;" >> downloadReads.sh
+echo 'rmdir SA*' >>downloadReads.sh
+echo 'mkdir ../concatReads' >> downloadReads.sh
+echo 'cp *.gz ../concatReads' >> downloadReads.sh
+echo 'cd ../concatReads' >> downloadReads.sh
+echo 'mergeReads.sh -o mergeTemp' >> downloadReads.sh
+# -o is the directory to put output files in
+
+echo 'rm *L00*' >> downloadReads.sh
+echo "find . -name '*.gz' -exec mv {} . \;" >> downloadReads.sh
+echo 'gunzip *.gz' >> downloadReads.sh
+echo 'rmdir mergeTemp' >> downloadReads.sh
+
+chmod +x downloadReads.sh
+
+launcher_creator.py -b 'srun downloadReads.sh' -n downloadReads -q shortq7 -t 06:00:00 -e sydneybell2021@fau.edu
+sbatch downloadReads.slurm
+
+#How many reads before filtering?
+
+echo '#!/bin/bash' >rawReads
+echo readCounts.sh -e .fastq -o rttRaw >>rawReads
+
+sbatch -o rawReads.o%j -e rawReads.e%j rawReads --mail-type=ALL --mail-user=sydneybell2021@fau.edu
+
+1-1_S14_L002_R1_001     90377316
+1-2_S15_L002_R1_001     95905517
+1-3_S16_L002_R1_001     124219604
+1-4_S17_L002_R1_001     93726088
+1-5_S18_L002_R1_001     102543603
+1-6_S19_L002_R1_001     94457929
+
+
+total = 498,686,454 
+per sample = ~6,649,152 reads
+
+
+
+#how to rename: mv oldname newname
+#how to look at job progress: squeue -u sydneybell2021
+
+#Trim and demultiplex reads
+cd ../concatReads
+
+2bRAD_trim_launch_dedup.pl fastq > trims.sh
+launcher_creator.py -j trims.sh -n trims -q shortq7 -t 06:00:00 -e sydneybell2021@fau.edu
+sbatch --mem=200GB trims.slurm
+
+#check that we have the correct number of trim files
+
+ls -l *.tr0 | wc -l
+
+mkdir ../trimmedReads
+srun mv *.tr0 ../trimmedReads &
+
+zipper.py -f fastq -a -9 --launcher -e sydneybell2021@fau.edu
+sbatch --mem=200GB zip.slurm
+
+cd ../trimmedReads
+
+mkdir ../renamedReads
+srun cp *.tr0 ../renamedReads
+cd ../renamedReads
+
+srun sampleRename.py -i samplelist -n rtt_ -f tr0
+
+#Quality filter
+
+module load miniconda3-4.6.14-gcc-8.3.0-eenl5dj
+conda config --add channels defaults
+conda config --add channels bioconda
+conda config --add channels conda-forge
+conda create -n 2bRAD cutadapt
+
+source activate 2bRAD
+
+echo '#!/bin/bash' > trimse.sh
+echo 'module load miniconda3-4.6.14-gcc-8.3.0-eenl5dj' >> trimse.sh
+echo 'source activate 2bRAD' >> trimse.sh
+for file in *.tr0; do
+echo "cutadapt -q 15,15 -m 36 -o ${file/.tr0/}.trim $file > ${file/.tr0/}.trimlog.txt" >> trimse.sh;
+done
+sbatch -o trimse.o%j -e trimse.e%j --mem=200GB trimse.sh
+
+#Correct number of *.trim files created?
+
+conda deactivate 2bRAD
+ls -l *.trim | wc -l
+
+#How many reads in each sample?
+
+echo '#!/bin/bash' >rttReads
+echo readCounts.sh -e trim -o rttFilt >>rttReads
+sbatch --mem=200GB rttReads
+
+mkdir ../filteredReads
+mv *.trim ../filteredReads
+
+zipper.py -f tr0 -a -9 --launcher -e sydneybell2021@fau.edu
+sbatch zip.slurm
+
+cat rttFiltReadCounts
+
+## D E N O V O  R E F E R E N C E
+#remove symbiodiniaceae reads
+
+mkdir ~/bin/symGenomes
+cd ~/bin/symGenomes
+echo "bowtie2-build concatZooxGenomes.fasta.gz concatZooxGenomes" > bowtie2-build
+launcher_creator.py -j bowtie2-build -n bowtie2-build -q shortq7 -t 06:00:00 -e sydneybell2021@fau.edu
+module load bowtie2-2.3.5.1-gcc-8.3.0-63cvhw5
+sbatch --mem=200GB bowtie2-build.slurm
+gunzip concatZooxGenomes.fasta.gz
+module load samtools-1.10-gcc-8.3.0-khgksad
+srun samtools faidx concatZooxGenomes.fasta
+
+# Moved trimmed reads into species directories
+# how to move ranges of files
+ for x in {1...3}; do cp file$x ..; done
+# OR
+for x in {49..75}; do  cp rtt_$x.trim* ~/2bRAD_RTT/pcli/pcliTrimmedReads/; done
+
+#lost samples 12, 44, 49, 56
+
+### FROM NOW ON NEED TO DO EVERYTHING IN TRIPLICATE FOR EACH SPECIES
+
+#Mapping reads to concatenated Symbiodinaceae genome
+mkdir symbionts
+SYMGENOME=~/bin/symGenomes/concatZooxGenomes
+
+2bRAD_bowtie2_launcher.py -g $SYMGENOME -f .trim -n zooxMaps --split -u un -a zoox --aldir symbionts --launcher -e sydneybell2021@fau.edu
+
+sbatch zooxMaps.slurm
+
+#Checking Symbiodiniaceae read mapping rates
+>zooxAlignmentRates
+for F in `ls *zoox`; do
+M=`grep -E '^[ATGCN]+$' $F | wc -l | grep -f - zooxMaps.e* -A 4 | tail -1 | perl -pe 's/zooxMaps\.e\d+-|% overall alignment rate//g'` ;
+echo "$F.sam $M">>zooxAlignmentRates;
+done
+
+# ls *trim | cut -d '.' -f 1 >align1
+# grep "% overall" zooxMaps.e* | cut -d ' ' -f 1 >align2
+# paste <(awk -F' ' '{print $1}' align1) <(awk -F' ' '{print $1}' align2) >zooxAlignmentRates
+# rm align1 align2
+
+less zooxAlignmentRates
+
+#seperate un and sam files into directories
+#Make unaligned directory
+cd ____TrimmedReads
+mkdir unaligned
+mkdir zoox
+cp *.sam zoox/
+cp *.un unaligned/
+
+zipper.py -f .trim -a -9 --launcher -e sydneybell2021@fau.edu
+sbatch --mem=200GB zip.slurm
+
+# PCLI ONLY: Uniquing reads
+
+cd pcliTrimmedReads
+ls *.trim.un | perl -pe 's/^(.+)$/uniquerOne.pl $1 >$1\.uni/' > unique
+
+launcher_creator.py -j unique -n unique -q shortq7 -t 06:00:00 -e sydneybell2021@fau.edu
+sbatch --mem=200GB unique.slurm
+
+# Checking there is a .uni for all samples (*56 IS MISSING)
+
+ls -l *.uni | wc -l
+
+### Collecting common tags (major alleles).
+# Merging uniqued files (set minInd to >10, or >10% of total number of samples, whichever is greater).
+
+echo 'mergeUniq.pl uni minInd=12 > all.uniq' > allunique
+
+launcher_creator.py -j allunique -n allunique -q shortq7 -t 06:00:00 -e sydneybell2021@fau.edu
+sbatch --mem=200GB allunique.slurm
+
+#Discarding tags that have more than 7 observations without reverse-complement
+srun awk '!($3>7 && $4==0) && $2!="seq"' all.uniq >all.tab
+
+#Creating fasta file out of merged and filtered tags:
+srun awk '{print ">"$1"\n"$2}' all.tab >all.fasta
+
+#Clustering allowing for up to 3 mismatches (-c 0.91); the most abundant sequence becomes reference
+echo '#!/bin/bash' >cdhit
+echo cd-hit-est -i all.fasta -o cdh_alltags.fas -aL 1 -aS 1 -g 1 -c 0.91 -M 0 -T 0 >>cdhit
+sbatch --mem=200GB -e cdhit.e%j -o cdhit.o%j cdhit
+
+rm *.uni
+
+echo '#!/bin/bash' >krakendb.sh
+echo kraken2-build --download-taxonomy --db ~/bin/krakenDB >>krakendb.sh
+echo kraken2-build --download-library archaea --threads 16 --db ~/bin/krakenDB >>krakendb.sh
+echo kraken2-build --download-library bacteria --threads 16 --db ~/bin/krakenDB >>krakendb.sh
+echo kraken2-build --download-library viral --threads 16 --db ~/bin/krakenDB >>krakendb.sh
+echo kraken2-build --download-library human --threads 16 --db ~/bin/krakenDB >>krakendb.sh
+echo kraken2-build --download-library fungi --threads 16 --db ~/bin/krakenDB >>krakendb.sh
+echo kraken2-build --download-library protozoa --threads 16 --db ~/bin/krakenDB >>krakendb.sh
+echo kraken2-build --download-library UniVec_Core --threads 16 --db ~/bin/krakenDB >>krakendb.sh
+
+sbatch --mem=200GB -p longq7 -e krakenDB.e%j -o krakenDB.o%j krakendb.sh
+
+# Finally, build the database
+```{bash, kraken build}
+echo '#!/bin/bash' >kdbBuild
+echo kraken2-build --download-taxonomy --threads 16 --db /mnt/beegfs/home/sydneybell2021/bin/krakenDB >>kdbBuild
+echo kraken2-build --build --db ~/bin/krakenDB >>kdbBuild
+sbatch --mem=200GB -o kdbBuild.o%j -e kdbBuild.e%j kdbBuild
+
+#Remove potential contamination from reference
+cd ~/2bRAD_RTT/pcli/pcliTrimmedReads
+
+echo '#!/bin/bash' >krakenDB
+echo kraken2 --db ~/bin/krakenDB cdh_alltags.fas --threads 16 --classified-out cdh_alltags.contam.fa --unclassified-out cdh_alltags.unclass.fa --report krakenDB.report --output krakenDB.out >>krakenDB
+
+sbatch --mem=200GB -o krakenDB.o%j -e krakenDB.e%j krakenDB
+
+### Construct denovo genome
+With 30 pseudo chromosomes from clean major allele tags
+mkdir ../mappedReads
+mv cdh_alltags.unclass.fa ../mappedReads
+cd ../mappedReads
+
+# rename file
+mv cdh_alltags.unclass.fa pcli_denovo.fa
+
+
+concatFasta.pl fasta=pcli_denovo.fa num=30
+
+### Format pseudo genome
+GENOME_FASTA=pcli_denovo_cc.fasta
+
+echo '#!/bin/bash' >genomeBuild.sh
+echo bowtie2-build $GENOME_FASTA $GENOME_FASTA >>genomeBuild.sh
+echo samtools faidx $GENOME_FASTA >>genomeBuild.sh
+
+sbatch -o genomeBuild.o%j -e genomeBuild.e%j --mem=200GB genomeBuild.sh
+
+# MAPPING READS TO REFERENCE
+#Mapping reads to reference and formatting bam files
+
+#Map reads to fake genome:
+mv ../pcliTrimmedReads/*.un .
+mv ../pcliTrimmedReads/symbionts .
+
+
+
+GENOME_FASTA=pcli_denovo_cc.fasta
+
+# mapping with --local option, enables clipping of mismatching ends (guards against deletions near ends of RAD tags)
+2bRAD_bowtie2_launcher.py -f un -g $GENOME_FASTA --launcher -e sydneybell2021@fau.edu
+sbatch --mem=200GB maps.slurm
+
+#Do we have the right number of SAM files?
+ls *.sam | wc -l
+
+#Check alignment rates
+ls *un | cut -d '.' -f 1 >align1
+grep "% overall" maps.e* | cut -d ' ' -f 1 >align2
+>alignmentRates
+paste <(awk -F' ' '{print $1}' align1) <(awk -F' ' '{print $1}' align2) >alignmentRates
+rm align1 align2
+
+less alignmentRates
+
+# Convert SAM files to BAM files
+#BAM files will be used for genotyping, population structure, etc.
+>s2b
+for file in *.sam; do
+echo "samtools sort -O bam -o ${file/.sam/}.bam $file && samtools index ${file/.sam/}.bam">>s2b;
+done
+
+launcher_creator.py -j s2b -n s2b -q shortq7 -t 06:00:00 -e sydneybell2021@fau.edu
+sbatch --mem=200GB s2b.slurm
+
+```
+
+#Do we have enough BAM files?
+ls *bam | wc -l  # should be the same number as number of trim files
+
+#Clean up directory
+zipper.py -a -9 -f sam --launcher -e sydneybell2021@fau.edu
+sbatch zip.slurm
+
+rm *.un
+
+### MCAV ##################################################################
+
+#seperate un and sam files into directories
+#Make unaligned directory
+cd mcavTrimmedReads
+mkdir sams
+cd sams
+mkdir unaligned
+mkdir zoox
+cp *.sam ./sams/zoox/
+cp *.un ./sams/unaligned
+
+cd symbionts
+mkdir dualAligned
+mkdir zooxOnly
+
+#Index genome
+cd ~/bin/MCAV_genome
+echo "bowtie2-build Mcavernosa_July2018.fasta Mcavernosa_July2018.fasta" > bowtie2-build
+launcher_creator.py -j bowtie2-build -n bowtie2-build -q shortq7 -t 06:00:00 -e sydneybell2021@fau.edu
+module load bowtie2-2.3.5.1-gcc-8.3.0-63cvhw5
+sbatch --mem=200GB bowtie2-build.slurm
+module load samtools-1.10-gcc-8.3.0-khgksad
+srun samtools faidx Mcavernosa_July2018.fasta
+
+
+2bRAD_bowtie2_launcher.py -f trim.zoox -g ~/bin/MCAV_genome/Mcav_genome/Mcavernosa_July2018.fasta --split -a dual -u zooxOnly --undir ./zooxOnly --aldir ./dualAligned -n maps --launcher -e sydneybell2021@fau.edu
+sbatch maps.slurm
+
+#This makes zooxOnly sams
+cd zooxOnly
+2bRAD_bowtie2_launcher.py -f trim.zoox.zooxOnly -g ~/bin/MCAV_genome/Mcav_genome/Mcavernosa_July2018.fasta -n zooxOnlyMaps --launcher -e sydneybell2021@fau.edu
+sbatch zooxOnlyMaps.slurm
+
+#These sam files should now only have MCAV reads
+mkdir mcavSams
+cd sams
+srun cp ./unaligned/*.un ./mcavSams
+cd mcavSams
+2bRAD_bowtie2_launcher.py -f un -g ~/bin/MCAV_genome/Mcav_genome/Mcavernosa_July2018.fasta -n mcavMaps --launcher -e sydneybell2021@fau.edu
+
+mkdir zooxSams
+mv ~/2bRAD_RTT/mcav/mcavTrimmedReads/symbionts/zooxOnly/*.sam ~/2bRAD_RTT/mcav/mcavTrimmedReads/sams/zooxSams
+
+#Turn sams into bams
+cd mcavTrimmedReads
+mkdir bams
+cd bams
+mkdir zooxBams
+srun cp ~/2bRAD_RTT/mcav/mcavTrimmedReads/sams/zooxSams/*sam ./zooxBams
+
+#Compressing, sorting and indexing the SAM files, so they become BAM files:
+>s2b
+for file in *.sam; do
+echo "samtools sort -O bam -o ${file/.sam/}.bam $file && samtools index ${file/.sam/}.bam">>s2b;
+done
+
+launcher_creator.py -j s2b -n s2b -t 6:00:00 -e sydneybell2021@fau.edu -q shortq7
+sbatch s2b.slurm
+
+ls *bam >zooxBams
+
+####
+
+mkdir mcavBams
+srun cp ./sams/mcavSams/*.sam ./bams/mcavBams
+
+#Compressing, sorting and indexing the SAM files, so they become BAM files:
+>s2b
+for file in *.sam; do
+echo "samtools sort -O bam -o ${file/.sam/}.bam $file && samtools index ${file/.sam/}.bam">>s2b;
+done
+
+launcher_creator.py -j s2b -n s2b -t 6:00:00 -e sydneybell2021@fau.edu -q shortq7
+sbatch s2b.slurm
+
+ls *bam >bams
+
+### OFAV ################################################################
+
+#seperate un and sam files into directories
+#Make unaligned directory
+cd ofavTrimmedReads
+mkdir sams
+cd sams
+mkdir unaligned
+mkdir zoox
+cp *.sam ./sams/zoox/
+cp *.un ./sams/unaligned
+
+cd /2bRAD_RTT/ofav/ofavTrimmedReads/symbionts
+mkdir dualAligned
+mkdir zooxOnly
+
+#Index genome
+cd ~/bin/OFAV_genome_Prada/ncbi_dataset/data/GCA_001896105.1
+echo "bowtie2-build ofavGenome.fa ofavGenome.fa" > bowtie2-build
+launcher_creator.py -j bowtie2-build -n bowtie2-build -q shortq7 -t 06:00:00 -e sydneybell2021@fau.edu
+module load bowtie2-2.3.5.1-gcc-8.3.0-63cvhw5
+sbatch --mem=200GB bowtie2-build.slurm
+module load samtools-1.10-gcc-8.3.0-khgksad
+srun samtools faidx ofavGenome.fa
+
+#In the zoox directory you will have fastq files that aligned to the zoox genomes, realign back to the OFAV genome and again split these reads up into aligned and unaligned. In this case only used the unaligned reads because then you will get rid of any potential dual-aligned reads to both MCAV and algal symbiont.
+2bRAD_bowtie2_launcher.py -f .zoox -g ~/bin/OFAV_genome_Prada/ncbi_dataset/data/GCA_001896105.1/ofavGenome.fa --split -a dual -u zooxOnly --undir ./zooxOnly --aldir ./dualAligned -n maps --launcher -e sydneybell2021@fau.edu
+sbatch maps.slurm
+
+#This makes zooxOnly sams
+cd zooxOnly
+2bRAD_bowtie2_launcher.py -f trim.zoox.zooxOnly -g ~/bin/OFAV_genome_Prada/ncbi_dataset/data/GCA_001896105.1/ofavGenome.fa -n zooxOnlyMaps --launcher -e sydneybell2021@fau.edu
+sbatch zooxOnlyMaps.slurm
+
+#These sam files should now only have OFAV reads
+mkdir ofavSams
+cd sams
+srun cp ./unaligned/*.un ./ofavSams
+cd ofavSams
+2bRAD_bowtie2_launcher.py -f un -g ~/bin/OFAV_genome_Prada/ncbi_dataset/data/GCA_001896105.1/ofavGenome.fa -n ofavMaps --launcher -e sydneybell2021@fau.edu
+
+mkdir zooxSams
+mv ~/2bRAD_RTT/ofav/ofavTrimmedReads/symbionts/zooxOnly/*.sam ~/2bRAD_RTT/ofav/ofavTrimmedReads/sams/zooxSams
+
+#Turn sams into bams
+cd ofavTrimmedReads
+mkdir bams
+cd bams
+mkdir zooxBams
+srun cp ~/2bRAD_RTT/ofav/ofavTrimmedReads/sams/zooxSams/*sam ./zooxBams
+
+#Compressing, sorting and indexing the SAM files, so they become BAM files:
+>s2b
+for file in *.sam; do
+echo "samtools sort -O bam -o ${file/.sam/}.bam $file && samtools index ${file/.sam/}.bam">>s2b;
+done
+
+launcher_creator.py -j s2b -n s2b -t 6:00:00 -e sydneybell2021@fau.edu -q shortq7
+sbatch s2b.slurm
+
+ls *bam >zooxBams
+
+####
+
+mkdir ofavBams
+srun cp ./sams/ofavSams/*.sam ./bams/ofavBams
+
+#Compressing, sorting and indexing the SAM files, so they become BAM files:
+>s2b
+for file in *.sam; do
+echo "samtools sort -O bam -o ${file/.sam/}.bam $file && samtools index ${file/.sam/}.bam">>s2b;
+done
+
+launcher_creator.py -j s2b -n s2b -t 6:00:00 -e sydneybell2021@fau.edu -q shortq7
+sbatch s2b.slurm
+
+ls *bam >bams
+
+#########################################################
+#need to re-run samples
+1-6_TCAC.trim = 72.2 PCLI
+1-7_TCAC.trim = 72.3 PCLI
+rtt_48.trim   OFAV
+
+#########################################################
+
+##  G E N O T Y P I N G
+***
+"FUZZY genotyping" with ANGSD - without calling actual genotypes but working with genotype likelihoods at each SNP. Optimal for low-coverage data (<10x).
+```{bash, angsd dir}
+# MCAV ##############################################################
+#Run next chunk with Lexie's technical replicates (sf_)
+
+mkdir mcavANGSD
+cd mcavANGSD
+mv ../bams/mcavBams/*.bam* .
+
+ls *bam >bamsClones
+
+### Assessing base qualities and coverage depth
+```ANGSD``` settings:
+```-minMapQ 20```: only highly unique mappings (prob of erroneous mapping =< 1%)
+```-baq 1```: realign around indels (not terribly relevant for 2bRAD reads mapped with --local option)
+```-maxDepth```: highest total depth (sum over all samples) to assess; set to 10x number of samples
+```-minInd```: the minimal number of individuals the site must be genotyped in. Reset to 50% of total N at this stage.
+```{bash, ANGSD}
+export FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -maxDepth 160 -minInd 8"
+export TODO="-doQsDist 1 -doDepth 1 -doCounts 1 -dumpCounts 2"
+
+echo '#!/bin/bash' >mcavDD.sh
+echo angsd -b bamsClones -GL 1 $FILTERS $TODO -P 1 -out dd >>mcavDD.sh
+
+sbatch --mem=200GB -o mcavDD.o%j -e mcavDD.e%j --mail-user=sydneybell2021@fau.edu --mail-type=ALL mcavDD.sh
+
+#Summarizing results (using Misha Matz modified script by Matteo Fumagalli)
+```{bash, angsd results}
+echo '#!/bin/bash' >RQC.sh
+echo Rscript ~/bin/plotQC.R prefix=dd >>RQC.sh
+echo gzip -9 dd.counts >>RQC.sh
+sbatch -e RQC.e%j -o RQC.o%j --dependency=afterok:460550 --mem=200GB RQC.sh
+
+```scp``` dd.pdf to laptop to look at distribution of base quality scores, fraction of sites in each sample passing coverage thresholds and fraction of sites passing genotyping rates cutoffs. Use these to guide choices of ```-minQ```,  ```-minIndDepth``` and ```-minInd``` filters in subsequent ```ANGSD``` runs
+
+### Identifying clones and technical replicates
+```{bash, ANGSD clones}
+FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -dosnpstat 1 -doHWE 1 -hwe_pval 1e-5 -sb_pval 1e-5 -hetbias_pval 1e-5 -skipTriallelic 1 -minInd 12 -snp_pval 1e-6 -minMaf 0.05"
+TODO="-doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 -doIBS 1 -doCov 1 -doGeno 8 -doBcf 1 -doPost 1 -doGlf 2"
+
+echo '#!/bin/bash' > mcavClones.sh
+echo angsd -b bamsClones -GL 1 $FILTERS $TODO -P 1 -out mcavClones >>mcavClones.sh
+
+sbatch --mem=200GB -o mcavClones.o%j -e mcavClones.e%j -p shortq7 --mail-type=ALL --mail-user=sydneybell2021@fau.edu mcavClones.sh
+
+
+# OFAV ####################################################################
+mkdir ofavANGSD
+cd ofavANGSD
+mv ../bams/ofavBams/*.bam* .
+
+ls *bam >bamsClones
+
+### Assessing base qualities and coverage depth
+```ANGSD``` settings:
+```-minMapQ 20```: only highly unique mappings (prob of erroneous mapping =< 1%)
+```-baq 1```: realign around indels (not terribly relevant for 2bRAD reads mapped with --local option)
+```-maxDepth```: highest total depth (sum over all samples) to assess; set to 10x number of samples
+```-minInd```: the minimal number of individuals the site must be genotyped in. Reset to 50% of total N at this stage.
+```{bash, ANGSD}
+export FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -maxDepth 300 -minInd 15"
+export TODO="-doQsDist 1 -doDepth 1 -doCounts 1 -dumpCounts 2"
+
+echo '#!/bin/bash' >ofavDD.sh
+echo angsd -b bamsClones -GL 1 $FILTERS $TODO -P 1 -out dd >>ofavDD.sh
+
+sbatch --mem=200GB -o ofavDD.o%j -e ofavDD.e%j --mail-user=sydneybell2021@fau.edu --mail-type=ALL ofavDD.sh
+
+#Summarizing results (using Misha Matz modified script by Matteo Fumagalli)
+```{bash, angsd results}
+echo '#!/bin/bash' >RQC.sh
+echo Rscript ~/bin/plotQC.R prefix=dd >>RQC.sh
+echo gzip -9 dd.counts >>RQC.sh
+sbatch -e RQC.e%j -o RQC.o%j --dependency=afterok:460550 --mem=200GB RQC.sh
+
+```scp``` dd.pdf to laptop to look at distribution of base quality scores, fraction of sites in each sample passing coverage thresholds and fraction of sites passing genotyping rates cutoffs. Use these to guide choices of ```-minQ```,  ```-minIndDepth``` and ```-minInd``` filters in subsequent ```ANGSD``` runs
+
+### Identifying clones and technical replicates
+```{bash, ANGSD clones}
+FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -dosnpstat 1 -doHWE 1 -hwe_pval 1e-5 -sb_pval 1e-5 -hetbias_pval 1e-5 -skipTriallelic 1 -minInd 15 -snp_pval 1e-6 -minMaf 0.05"
+TODO="-doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 -doIBS 1 -doCov 1 -doGeno 8 -doBcf 1 -doPost 1 -doGlf 2"
+
+echo '#!/bin/bash' > ofavClones.sh
+echo angsd -b bamsClones -GL 1 $FILTERS $TODO -P 1 -out ofavClones >>ofavClones.sh
+
+sbatch --mem=200GB -o ofavClones.o%j -e ofavClones.e%j -p shortq7 --mail-type=ALL --mail-user=sydneybell2021@fau.edu ofavClones.sh
+
+# PCLI #####################################################
+mkdir pcliANGSD
+cd pcliANGSD
+mv ../*.gz* .
+
+ls *bam >bamsClones
+
+### Assessing base qualities and coverage depth
+```ANGSD``` settings:
+```-minMapQ 20```: only highly unique mappings (prob of erroneous mapping =< 1%)
+```-baq 1```: realign around indels (not terribly relevant for 2bRAD reads mapped with --local option)
+```-maxDepth```: highest total depth (sum over all samples) to assess; set to 10x number of samples
+```-minInd```: the minimal number of individuals the site must be genotyped in. Reset to 50% of total N at this stage.
+```-remove_bads```:same as the samtools flags -x which removes read with a flag above 255 (not primary, failure and duplicate reads). 0 no , 1 remove (default).
+```-uniqueOnly```: remove reads that have multiple best hits. 0 no (default), 1 remove.
+
+```{bash, ANGSD}
+export FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -maxDepth 270 -minInd 13"
+export TODO="-doQsDist 1 -doDepth 1 -doCounts 1 -dumpCounts 2"
+
+echo '#!/bin/bash' >pcliDD.sh
+echo angsd -b bamsClones -GL 1 $FILTERS $TODO -P 1 -out dd >>pcliDD.sh
+
+sbatch --mem=200GB -o pcliDD.o%j -e pcliDD.e%j --mail-user=sydneybell2021@fau.edu --mail-type=ALL pcliDD.sh
+
+#Summarizing results (using Misha Matz modified script by Matteo Fumagalli)
+```{bash, angsd results}
+echo '#!/bin/bash' >RQC.sh
+echo Rscript ~/bin/plotQC.R prefix=dd >>RQC.sh
+echo gzip -9 dd.counts >>RQC.sh
+sbatch -e RQC.e%j -o RQC.o%j --dependency=afterok:460550 --mem=200GB RQC.sh
+
+```scp``` dd.pdf to laptop to look at distribution of base quality scores, fraction of sites in each sample passing coverage thresholds and fraction of sites passing genotyping rates cutoffs.
+# Use these to guide choices of ```-minQ```,  ```-minIndDepth``` and ```-minInd``` filters in subsequent ```ANGSD``` runs
+# set minInd to 75-80% of your total number of bams
+### Identifying clones and technical replicates
+```{bash, ANGSD clones}
+FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -dosnpstat 1 -doHWE 1 -hwe_pval 1e-5 -sb_pval 1e-5 -hetbias_pval 1e-5 -skipTriallelic 1 -minInd 21 -snp_pval 1e-6 -minMaf 0.05"
+TODO="-doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 -doIBS 1 -doCov 1 -doGeno 8 -doBcf 1 -doPost 1 -doGlf 2"
+
+echo '#!/bin/bash' > pcliClones.sh
+echo angsd -b bamsClones -GL 1 $FILTERS $TODO -P 1 -out pcliClones >>pcliClones.sh
+
+sbatch --mem=200GB -o pcliClones.o%j -e pcliClones.e%j -p shortq7 --mail-type=ALL --mail-user=sydneybell2021@fau.edu pcliClones.sh
+
+################################################################################
+Use ibs matrix to identify clones with hierachial clustering in ```R```. ```scp``` to local machine and run chunk below in ```R```
+```{r, Dendrogram With Clones, fig.dim = c(13, 4.75)}
+cloneBams = read.csv("C:\Users\Sydney\Downloads\FAU\RTTgenotypeMetaData.csv") # list of bam files
+
+cloneMa = as.matrix(read.table(C:\Users\Sydney\Downloads\FAU\Genotype RTT\mcavClones.ibsMat)) # reads in IBS matrix produced by ANGSD
+
+dimnames(cloneMa) = list(cloneBams[,1],cloneBams[,1])
+clonesHc = hclust(as.dist(cloneMa),"ave")
+
+cloneDend = cloneMa %>% as.dist() %>% hclust(.,"ave") %>% as.dendrogram()
+cloneDData = cloneDend %>% dendro_data()
+
+# Making the branches hang shorter so we can easily see clonal groups
+cloneDData$segments$yend2 = cloneDData$segments$yend
+for(i in 1:nrow(cloneDData$segments)) {
+  if (cloneDData$segments$yend2[i] == 0) {
+    cloneDData$segments$yend2[i] = (cloneDData$segments$y[i] - 0.01)}}
+
+cloneDendPoints = cloneDData$labels
+cloneDendPoints$pop = clonePops[order.dendrogram(cloneDend)]
+cloneDendPoints$depth=cloneDepth[order.dendrogram(cloneDend)]
+rownames(cloneDendPoints) = cloneDendPoints$label
+
+# Making points at the leaves to place symbols for populations
+point = as.vector(NA)
+for(i in 1:nrow(cloneDData$segments)) {
+  if (cloneDData$segments$yend[i] == 0) {
+    point[i] = cloneDData$segments$y[i] - 0.01
+  } else {
+    point[i] = NA}}
+
+cloneDendPoints$y = point[!is.na(point)]
+
+techReps = c("S066.1", "S066.2", "S066.3", "S162.1", "S162.2", "S162.3", "S205.1", "S205.2", "S205.3")
+cloneDendPoints$depth = factor(cloneDendPoints$depth,levels(cloneDendPoints$depth)[c(2,1)])
+
+cloneDendPoints$pop = factor(cloneDendPoints$pop,levels(cloneDendPoints$pop)[c(4, 1, 3, 2)])
+
+flPal = paletteer_d("vapoRwave::jazzCup")[c(2:5)]
+
+cloneDendA = ggplot() +
+  geom_segment(data = segment(cloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
+  geom_point(data = cloneDendPoints, aes(x = x, y = y, fill = pop, shape = depth), size = 4, stroke = 0.25) +
+  #scale_fill_brewer(palette = "Dark2", name = "Population") +
+  scale_fill_manual(values = flPal, name= "Population")+
+  scale_shape_manual(values = c(24, 25), name = "Depth Zone")+
+  geom_hline(yintercept = 0.12, color = "red", lty = 5, size = 0.75) + # creating a dashed line to indicate a clonal distance threshold
+  geom_text(data = subset(cloneDendPoints, subset = label %in% techReps), aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
+  geom_text(data = subset(cloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .010), label = label), angle = 90) +
+  labs(y = "Genetic distance (1 - IBS)") +
+  guides(fill = guide_legend(override.aes = list(shape = 22)))+
+  theme_classic()
+
+cloneDend = cloneDendA + theme(
+  axis.title.x = element_blank(),
+  axis.text.x = element_blank(),
+  axis.line.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.title.y = element_text(size = 12, color = "black", angle = 90),
+  axis.text.y = element_text(size = 10, color = "black"),
+  axis.line.y = element_line(),
+  axis.ticks.y = element_line(),
+  panel.grid = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  plot.background = element_blank(),
+  legend.key = element_blank(),
+  legend.title = element_text(size = 12),
+  legend.text = element_text(size = 10),
+  legend.position = "bottom")
+
+cloneDend
+
+ggsave("../figures/cloneDend.png", plot = cloneDend, height = 8, width = 35, units = "in", dpi = 300)
+ggsave("../figures/cloneDend.eps", plot = cloneDend, height = 8, width = 35, units = "in", dpi = 300)
+
+```
+![](../figures/cloneDend.png)
+
+#########################################################################
+## I N B R E E D I N G &nbsp; & &nbsp; R E L A T E D N E S S
+***
+
+```{bash}
+
+## MCAV ###################################################################
+cd ~/2bRAD/mcav/mappedReads/mcavANGSD
+
+FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -dosnpstat 1 -doHWE 1 -hwe_pval 1e-5 -sb_pval 1e-5 -hetbias_pval 1e-5 -skipTriallelic 1 -minInd 12 -snp_pval 1e-6 -minMaf 0.05"
+TODO="-doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 -doIBS 1 -doCov 1 -doGeno 8 -doBcf 1 -doPost 1 -doGlf 3"
+
+echo '#!/bin/bash' > mcavNgsRelate.sh
+echo srun angsd -b bamsClones -GL 1 $FILTERS $TODO -P 1 -out mcavNgsRelate >> mcavNgsRelate.sh
+
+sbatch --mem=200GB -o mcavNgsRelate.o%j -e mcavNgsRelate.e%j -p shortq7 --mail-type=ALL --mail-user=sydneybell2021@fau.edu mcavNgsRelate.sh
+
+zcat mcavNgsRelate.mafs.gz | cut -f5 |sed 1d >freq
+
+echo '#!/bin/bash' > MCAVngsRelate.sh
+echo ngsRelate -g mcavNgsRelate.glf.gz -n 16 -f freq  -O newres >> MCAVngsRelate.sh
+
+sbatch -e MCAVngsRelate.e%j -o MCAVngsRelate.o%j --mem=200GB --mail-user sydneybell2021@fau.edu --mail-type=ALL MCAVngsRelate.sh
+
+#After everything runs, clean up directory and look at data
+```{bash, relate}
+mkdir ../ngsRelate
+
+mv freq ../ngsRelate/
+mv *mcavNgs*Relate* ../ngsRelate/
+mv newres ../ngsRelate
+
+cd ../ngsRelate
+
+Relatedness (rab)
+#download newres and open in R
+#run in R
+relate=read.delim("newres")
+View(relate)
+
+#5-7 rab = 0.978974
+#3-6 rab = 0.989824
+#1-10 rab = 0.974470
+
+## OFAV ###################################################################
+cd ~/2bRAD/ofav/mappedReads/ofavANGSD
+
+FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -dosnpstat 1 -doHWE 1 -hwe_pval 1e-5 -sb_pval 1e-5 -hetbias_pval 1e-5 -skipTriallelic 1 -minInd 15 -snp_pval 1e-6 -minMaf 0.05"
+TODO="-doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 -doIBS 1 -doCov 1 -doGeno 8 -doBcf 1 -doPost 1 -doGlf 3"
+
+echo '#!/bin/bash' > ofavNgsRelate.sh
+echo srun angsd -b bamsClones -GL 1 $FILTERS $TODO -P 1 -out ofavNgsRelate >> ofavNgsRelate.sh
+
+sbatch --mem=200GB -o ofavNgsRelate.o%j -e ofavNgsRelate.e%j -p shortq7 --mail-type=ALL --mail-user=sydneybell2021@fau.edu ofavNgsRelate.sh
+
+zcat ofavNgsRelate.mafs.gz | cut -f5 |sed 1d >freq
+
+echo '#!/bin/bash' > OFAVngsRelate.sh
+echo ngsRelate -g ofavNgsRelate.glf.gz -n 30 -f freq  -O newres >> OFAVngsRelate.sh
+
+sbatch -e OFAVngsRelate.e%j -o OFAVngsRelate.o%j --mem=200GB --mail-user sydneybell2021@fau.edu --mail-type=ALL OFAVngsRelate.sh
+
+#After everything runs, clean up directory and look at data
+```{bash, relate}
+mkdir ../ngsRelate
+
+mv freq ../ngsRelate/
+mv *ofavNgs*Relate* ../ngsRelate/
+mv newres ../ngsRelate
+
+cd ../ngsRelate
+
+Relatedness (rab)
+#download newres and open in R
+#run in R
+relate=read.delim("newres")
+View(relate)
+
+#41/47 = 0.808867
+#35/37 = 0.694052
+#37/45/46 = >0.96
+#22/27 = 0.948454
+#39/48 = 0.994482
+
+## PCLI ###################################################################
+# samples 72 and 73 are NOT pcli. Re-ran all other pcli samples (starting at collecting common tags in directory pcliUniqued) to re-make denovo reference
+
+echo '#!/bin/bash' >krakenDB
+echo kraken2 --db ~/bin/krakenDB cdh_alltags.fas --threads 16 --classified-out cdh_alltags.contam.fa --unclassified-out cdh_alltags.unclass.fa --report krakenDB.report --output krakenDB.out >>krakenDB
+
+sbatch --mem=200GB -o krakenDB.o%j -e krakenDB.e%j krakenDB
+
+### Construct denovo genome
+With 30 pseudo chromosomes from clean major allele tags
+mkdir ../../pcliONLYmappedReads
+mv cdh_alltags.unclass.fa ../../pcliONLYmappedReads
+cd ../../pcliONLYmappedReads
+
+# rename file
+mv cdh_alltags.unclass.fa pcliONLY_denovo.fa
+
+
+concatFasta.pl fasta=pcliONLY_denovo.fa num=30
+
+### Format pseudo genome
+PCLIGENOME_FASTA=pcliONLY_denovo_cc.fasta
+
+echo '#!/bin/bash' >genomeBuild.sh
+echo bowtie2-build $PCLIGENOME_FASTA $PCLIGENOME_FASTA >>genomeBuild.sh
+echo samtools faidx $PCLIGENOME_FASTA >>genomeBuild.sh
+
+sbatch -o genomeBuild.o%j -e genomeBuild.e%j --mem=200GB genomeBuild.sh
+mv genomeBuild.sh PCLIgenomeBuild.sh
+
+# MAPPING READS TO REFERENCE
+#Mapping reads to reference and formatting bam files
+
+#Map reads to fake genome:
+cp ../pcliTrimmedReads/unaligned/*.un .
+cp ../pcliTrimmedReads/zoox/*.sam .
+
+
+PCLIGENOME_FASTA=pcliONLY_denovo_cc.fasta
+
+# mapping with --local option, enables clipping of mismatching ends (guards against deletions near ends of RAD tags)
+2bRAD_bowtie2_launcher.py -f un -g $PCLIGENOME_FASTA --launcher -e sydneybell2021@fau.edu
+sbatch --mem=200GB maps.slurm
+
+#Do we have the right number of SAM files?
+ls *.sam | wc -l
+
+#Check alignment rates
+ls *un | cut -d '.' -f 1 >align1
+grep "% overall" maps.e* | cut -d ' ' -f 1 >align2
+>alignmentRates
+paste <(awk -F' ' '{print $1}' align1) <(awk -F' ' '{print $1}' align2) >alignmentRates
+rm align1 align2
+
+less alignmentRates
+
+# Convert SAM files to BAM files
+#BAM files will be used for genotyping, population structure, etc.
+>s2b
+for file in *.sam; do
+echo "samtools sort -O bam -o ${file/.sam/}.bam $file && samtools index ${file/.sam/}.bam">>s2b;
+done
+
+launcher_creator.py -j s2b -n s2b -q shortq7 -t 06:00:00 -e sydneybell2021@fau.edu
+sbatch --mem=200GB s2b.slurm
+
+```
+
+#Do we have enough BAM files?
+ls *bam | wc -l  # should be the same number as number of trim files
+
+#Clean up directory
+zipper.py -a -9 -f sam --launcher -e sydneybell2021@fau.edu
+sbatch zip.slurm
+
+rm *.un
+
+mkdir pcliANGSD
+cd pcliANGSD
+mv ../*.gz* .
+
+ls *bam >bamsClones
+
+### Assessing base qualities and coverage depth
+```ANGSD``` settings:
+```-minMapQ 20```: only highly unique mappings (prob of erroneous mapping =< 1%)
+```-baq 1```: realign around indels (not terribly relevant for 2bRAD reads mapped with --local option)
+```-maxDepth```: highest total depth (sum over all samples) to assess; set to 10x number of samples
+```-minInd```: the minimal number of individuals the site must be genotyped in. Reset to 50% of total N at this stage.
+```-remove_bads```:same as the samtools flags -x which removes read with a flag above 255 (not primary, failure and duplicate reads). 0 no , 1 remove (default).
+```-uniqueOnly```: remove reads that have multiple best hits. 0 no (default), 1 remove.
+
+```{bash, ANGSD}
+export FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -maxDepth 230 -minInd 12"
+export TODO="-doQsDist 1 -doDepth 1 -doCounts 1 -dumpCounts 2"
+
+echo '#!/bin/bash' >pcliDD.sh
+echo angsd -b bamsClones -GL 1 $FILTERS $TODO -P 1 -out dd >>pcliDD.sh
+
+sbatch --mem=200GB -o pcliDD.o%j -e pcliDD.e%j --mail-user=sydneybell2021@fau.edu --mail-type=ALL pcliDD.sh
+
+#Summarizing results (using Misha Matz modified script by Matteo Fumagalli)
+```{bash, angsd results}
+echo '#!/bin/bash' >RQC.sh
+echo Rscript ~/bin/plotQC.R prefix=dd >>RQC.sh
+echo gzip -9 dd.counts >>RQC.sh
+sbatch -e RQC.e%j -o RQC.o%j --dependency=afterok:460550 --mem=200GB RQC.sh
+
+```scp``` dd.pdf to laptop to look at distribution of base quality scores, fraction of sites in each sample passing coverage thresholds and fraction of sites passing genotyping rates cutoffs.
+# Use these to guide choices of ```-minQ```,  ```-minIndDepth``` and ```-minInd``` filters in subsequent ```ANGSD``` runs
+# set minInd to 75-80% of your total number of bams
+### Identifying clones and technical replicates
+```{bash, ANGSD clones}
+FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -dosnpstat 1 -doHWE 1 -hwe_pval 1e-5 -sb_pval 1e-5 -hetbias_pval 1e-5 -skipTriallelic 1 -minInd 18 -snp_pval 1e-6 -minMaf 0.05"
+TODO="-doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 -doIBS 1 -doCov 1 -doGeno 8 -doBcf 1 -doPost 1 -doGlf 2"
+
+echo '#!/bin/bash' > pcliClones.sh
+echo angsd -b bamsClones -GL 1 $FILTERS $TODO -P 1 -out pcliClones >>pcliClones.sh
+
+sbatch --mem=200GB -o pcliClones.o%j -e pcliClones.e%j -p shortq7 --mail-type=ALL --mail-user=sydneybell2021@fau.edu pcliClones.sh
+###
+
+cd ~/2bRAD//pcli/mappedReads/pcliANGSD
+
+#set minInd to 50% of # of samples
+FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -dosnpstat 1 -doHWE 1 -hwe_pval 1e-5 -sb_pval 1e-5 -hetbias_pval 1e-5 -skipTriallelic 1 -minInd 11 -snp_pval 1e-6 -minMaf 0.05"
+TODO="-doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 -doIBS 1 -doCov 1 -doGeno 8 -doBcf 1 -doPost 1 -doGlf 3"
+
+echo '#!/bin/bash' > pcliNgsRelate.sh
+echo srun angsd -b bamsClones -GL 1 $FILTERS $TODO -P 1 -out pcliNgsRelate >> pcliNgsRelate.sh
+
+sbatch --mem=200GB -o pcliNgsRelate.o%j -e pcliNgsRelate.e%j -p shortq7 --mail-type=ALL --mail-user=sydneybell2021@fau.edu pcliNgsRelate.sh
+
+zcat pcliNgsRelate.mafs.gz | cut -f5 |sed 1d >freq
+
+#set n to number of samples
+echo '#!/bin/bash' > PCLIngsRelate.sh
+echo ngsRelate -g pcliNgsRelate.glf.gz -n 23 -f freq  -O newres >> PCLIngsRelate.sh
+
+sbatch -e PCLIngsRelate.e%j -o PCLIngsRelate.o%j --mem=200GB --mail-user sydneybell2021@fau.edu --mail-type=ALL PCLIngsRelate.sh
+
+#After everything runs, clean up directory and look at data
+```{bash, relate}
+mkdir ../ngsRelate
+
+mv freq ../ngsRelate/
+mv *pcliNgs*Relate* ../ngsRelate/
+mv newres ../ngsRelate
+
+cd ../ngsRelate
+
+Relatedness (rab)
+#download newres and open in R
+#run in R
+relate=read.delim("newres")
+View(relate)
+
+relate=read.delim("OFAVnewres")
+View(relate)
+
+#62/69 = 0.731537
+#54/61 = 0.974129
+#52/63 = 0.734032
+#50/51 = 0.958960
+#50/53 = 0.993881
+#51/53 = 0.961193
+
+# Re-Run IBS with Lexie's Mcav Tech Reps ###########
+#Run next chunk with Lexie's technical replicates (sf_)
+
+mkdir mcavANGSD
+cd mcavANGSD
+mv ../bams/mcavBams/*.bam* .
+
+ls *bam >MCAVbamsClones
+
+### Assessing base qualities and coverage depth
+```ANGSD``` settings:
+```-minMapQ 20```: only highly unique mappings (prob of erroneous mapping =< 1%)
+```-baq 1```: realign around indels (not terribly relevant for 2bRAD reads mapped with --local option)
+```-maxDepth```: highest total depth (sum over all samples) to assess; set to 10x number of samples
+```-minInd```: the minimal number of individuals the site must be genotyped in. Reset to 50% of total N at this stage.
+```{bash, ANGSD}
+export FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -maxDepth 250 -minInd 13"
+export TODO="-doQsDist 1 -doDepth 1 -doCounts 1 -dumpCounts 2"
+
+echo '#!/bin/bash' >MCAVDD.sh
+echo angsd -b MCAVbamsClones -GL 1 $FILTERS $TODO -P 1 -out dd >>MCAVDD.sh
+
+sbatch --mem=200GB -o MCAVDD.o%j -e MCAVDD.e%j --mail-user=sydneybell2021@fau.edu --mail-type=ALL MCAVDD.sh
+
+#Summarizing results (using Misha Matz modified script by Matteo Fumagalli)
+```{bash, angsd results}
+echo '#!/bin/bash' >MCAVRQC.sh
+echo Rscript ~/bin/plotQC.R prefix=dd >>MCAVRQC.sh
+echo gzip -9 dd.counts >>MCAVRQC.sh
+sbatch -e MCAVRQC.e%j -o MCAVRQC.o%j --dependency=afterok:460550 --mem=200GB MCAVRQC.sh
+
+```scp``` dd.pdf to laptop to look at distribution of base quality scores, fraction of sites in each sample passing coverage thresholds and fraction of sites passing genotyping rates cutoffs. Use these to guide choices of ```-minQ```,  ```-minIndDepth``` and ```-minInd``` filters in subsequent ```ANGSD``` runs
+
+### Identifying clones and technical replicates
+```{bash, ANGSD clones}
+FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -dosnpstat 1 -doHWE 1 -hwe_pval 1e-5 -sb_pval 1e-5 -hetbias_pval 1e-5 -skipTriallelic 1 -minInd 19 -snp_pval 1e-6 -minMaf 0.05"
+TODO="-doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 -doIBS 1 -doCov 1 -doGeno 8 -doBcf 1 -doPost 1 -doGlf 2"
+
+echo '#!/bin/bash' > MCAVClones.sh
+echo angsd -b MCAVbamsClones -GL 1 $FILTERS $TODO -P 1 -out MCAVClones >>MCAVClones.sh
+
+sbatch --mem=200GB -o MCAVClones.o%j -e MCAVClones.e%j -p shortq7 --mail-type=ALL --mail-user=sydneybell2021@fau.edu MCAVClones.sh
+
+### Removing clones and re-running ANGSD ###
+
+#MCAV
+
+mkdir clones
+mv MCAVClones* clones
+
+ls *.bam > bamsNoClones2
+
+cat bamsClones | grep -v 'rtt_07.trim.un.bt2.bam\|rtt_06.trim.un.bt2.bam\|rtt_10.trim.un.bt2.bam\|sf_020-2.trim.unal.bt2.bam\|sf_020-3.trim.unal.bt2.bam\|sf_020.trim.unal.bt2.bam\|sf_039-2.trim.unal.bt2.bam\|sf_039-3.trim.unal.bt2.bam\|sf_039.trim.unal.bt2.bam\|sf_044-2.trim.unal.bt2.bam\|sf_044-3.trim.unal.bt2.bam\|sf_044.trim.unal.bt2.bam' >bamsNoClones2
+
+##Make sure to change -minInd to 50% of N
+
+FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -dosnpstat 1 -doHWE 1 -hwe_pval 1e-5 -sb_pval 1e-5 -hetbias_pval 1e-5 -skipTriallelic 1 -minInd 6 -snp_pval 1e-6 -minMaf 0.05"
+TODO="-doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 -doIBS 1 -doCov 1 -doGeno 8 -doBcf 1 -doPost 1 -doGlf 2"
+
+echo '#!/bin/bash' > MCAVNoClones.sh
+echo srun angsd -b bamsNoClones2 -GL 1 $FILTERS $TODO -P 1 -out MCAVNoClones >> MCAVNoClones.sh
+
+sbatch --mem=200GB -o MCAVNoClones.o%j -e MCAVNoClones.e%j -p shortq7 --mail-type=ALL --mail-user=sydneybell2021@fau.edu MCAVNoClones.sh
+
+grep "filtering:" MCAVNoClones.e7893340
+
+ -> Number of sites retained after filtering: 19,246 SNPs
+
+ #OFAV
+
+ mkdir clones
+ mv OFAVClones* clones
+
+ ls *.bam > bamsNoClones
+
+ #remove 37,46,27, and 48
+ cat bamsClones | grep -v 'rtt_37.trim.un.bt2.bam\|rtt_46.trim.un.bt2.bam\|rtt_27.trim.un.bt2.bam\|rtt_48.trim.un.bt2.bam' >bamsNoClones
+
+ ##Make sure to change -minInd to 50% of N
+
+ FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -dosnpstat 1 -doHWE 1 -hwe_pval 1e-5 -sb_pval 1e-5 -hetbias_pval 1e-5 -skipTriallelic 1 -minInd 13 -snp_pval 1e-6 -minMaf 0.05"
+ TODO="-doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 -doIBS 1 -doCov 1 -doGeno 8 -doBcf 1 -doPost 1 -doGlf 2"
+
+ echo '#!/bin/bash' > OFAVNoClones.sh
+ echo srun angsd -b bamsNoClones -GL 1 $FILTERS $TODO -P 1 -out OFAVNoClones >> OFAVNoClones.sh
+
+ sbatch --mem=200GB -o OFAVNoClones.o%j -e OFAVNoClones.e%j -p shortq7 --mail-type=ALL --mail-user=sydneybell2021@fau.edu OFAVNoClones.sh
+
+ grep "filtering:" OFAVNoClones.e7893341
+
+ -> Number of sites retained after filtering: 19,463 SNPs
+
+ #PCLI
+
+ mkdir clones
+ mv pcliClones* clones
+
+ ls *.bam > bamsNoClones
+
+ #remove clones
+ cat bamsClones | grep -v 'rtt_61.trim.un.bt2.bam\|rtt_49.trim.un.bt2.bam\|rtt_56.trim.un.bt2.bam\|rtt_50.trim.un.bt2.bam\|rtt_53.trim.un.bt2.bam\|rtt_59.trim.un.bt2.bam\|rtt_57.trim.un.bt2.bam\|rtt_60.trim.un.bt2.bam' >bamsNoClones
+
+ ##Make sure to change -minInd to 50% of N
+
+ FILTERS="-uniqueOnly 1 -remove_bads 1 -minMapQ 20 -minQ 30 -dosnpstat 1 -doHWE 1 -hwe_pval 1e-5 -sb_pval 1e-5 -hetbias_pval 1e-5 -skipTriallelic 1 -minInd 8 -snp_pval 1e-6 -minMaf 0.05"
+ TODO="-doMajorMinor 1 -doMaf 1 -doCounts 1 -makeMatrix 1 -doIBS 1 -doCov 1 -doGeno 8 -doBcf 1 -doPost 1 -doGlf 2"
+
+ echo '#!/bin/bash' > PCLINoClones.sh
+ echo srun angsd -b bamsNoClones -GL 1 $FILTERS $TODO -P 1 -out PCLINoClones >> PCLINoClones.sh
+
+ sbatch --mem=200GB -o PCLINoClones.o%j -e PCLINoClones.e%j -p shortq7 --mail-type=ALL --mail-user=sydneybell2021@fau.edu PCLINoClones.sh
+
+ grep "filtering:" PCLINoClones.e7893342
+
+  -> Number of sites retained after filtering: 21,800 SNPs
+
+## S Y M B I O N T S ##
+***
+
+```{bash, sym}
+*****MCAV************
+cd mcav/mcavTrimmedReads/sams/zooxSams
+
+cd ~/2bRAD/mcav/
+mkdir symbionts
+cd symbionts
+cp ~/2bRAD_RTT/mcav/mcavTrimmedReads/sams/zooxSams/*.sam .
+
+
+****This was redone in REzooxReads******
+SYMGENOME=~/bin/symGenomes/concatZooxGenomes
+2bRAD_bowtie2_launcher.py -f zooxOnly -g $SYMGENOME --launcher -e sydneybell2021@fau.edu
+
+
+sbatch --mem=100GB maps.slurm
+
+>s2b
+for file in *.sam; do
+echo "samtools sort -O bam -o ${file/.sam/}.bam $file && samtools index ${file/.sam/}.bam">>s2b;
+done
+
+launcher_creator.py -j s2b -n s2b -t 6:00:00 -N 5 -e sydneybell2021@fau.edu -q shortq7
+sbatch s2b.slurm
+
+```
+
+Count reads mapping to each chromosome for concatenated Symbiodiniaceae genome
+```{bash, sym2}
+>zooxReads
+
+for i in *.bam; do
+echo $i >>zooxReads;
+samtools idxstats $i | cut -f 1,3 >>zooxReads;
+done
+
+*****OFAV************
+cd ofav/ofavTrimmedReads/REsams/REzooxSams
+
+cd ~/2bRAD/ofav/
+mkdir symbionts
+cd symbionts
+mv ~/2bRAD_RTT/ofav/ofavTrimmedReads/REsams/REzooxSams .
+mv ~/2bRAD_RTT/ofav/ofavTrimmedReads/sams/zooxSams .
+cd symbionts
+
+SYMGENOME=~/bin/symGenomes/concatZooxGenomes
+2bRAD_bowtie2_launcher.py -f zooxOnly -g $SYMGENOME --launcher -e sydneybell2021@fau.edu
+
+
+sbatch --mem=100GB maps.slurm
+
+>s2b
+for file in *.sam; do
+echo "samtools sort -O bam -o ${file/.sam/}.bam $file && samtools index ${file/.sam/}.bam">>s2b;
+done
+
+launcher_creator.py -j s2b -n s2b -t 6:00:00 -N 5 -e sydneybell2021@fau.edu -q shortq7
+sbatch s2b.slurm
+
+```
+
+Count reads mapping to each chromosome for concatenated Symbiodiniaceae genome
+```{bash, sym2}
+>zooxReads
+
+for i in *.bam; do
+echo $i >>zooxReads;
+samtools idxstats $i | cut -f 1,3 >>zooxReads;
+done
+
+
+*****PCLI************
+
+#redo this with .sam files rom pcliTrimmedReads/zoox
+
+cd ~/2bRAD/pcli/
+mkdir symbionts
+cd symbionts
+cp ~/2bRAD_RTT/pcli/pcliTrimmedReads/REbams/*.sams .  #need sams files of these, they are only bams rn
+
+#run this
+for file in ./*.bam
+do
+    echo $file
+    samtools view -h $file > ${file/.bam/.sam}
+done
+
+cp ~/2bRAD_RTT/pcli/pcliTrimmedReads/zoox/*.sam .
+
+SYMGENOME=~/bin/symGenomes/concatZooxGenomes
+2bRAD_bowtie2_launcher.py -f *.zoox -g $SYMGENOME --launcher -e sydneybell2021@fau.edu
+
+sbatch --mem=100GB maps.slurm
+
+>s2b
+for file in *.sam; do
+echo "samtools sort -O bam -o ${file/.sam/}.bam $file && samtools index ${file/.sam/}.bam">>s2b;
+done
+
+launcher_creator.py -j s2b -n s2b -t 6:00:00 -N 5 -e sydneybell2021@fau.edu -q shortq7
+sbatch s2b.slurm
+
+```
+
+Count reads mapping to each chromosome for concatenated Symbiodiniaceae genome
+```{bash, sym2}
+>zooxReads
+
+for i in *.bam; do
+echo $i >>zooxReads;
+samtools idxstats $i | cut -f 1,3 >>zooxReads;
+done
+
+H E T E R O Z Y G O S I T Y
+Calculating Heterozygosity across all loci (variant//invariant) using ANGSD and R script from Misha Matz (https://github.com/z0on/2bRAD_denovo)
+
+#MCAV
+
+echo '#!/bin/bash' > RHetVar.sh
+echo heterozygosity_beagle.R MCAVNoClones.beagle.gz >> RHetVar.sh
+
+sbatch -e RHet.e%j -o RHet.o%j --mem=200GB --mail-user sydneybell2021@fau.edu --mail-type=ALL RHetVar.sh
+
+cp RHet.e* hetSnps
+
+mkdir angsdPopStats
+Note there are no MAF or snp filters so as not to affect allelic frequencies that may change heterozygosity calculations
+
+FILTERS="-uniqueOnly 1 -remove_bads 1  -skipTriallelic 1 -minMapQ 20 -minQ 30 -doHWE 1 -sb_pval 1e-5 -hetbias_pval 1e-5 -minInd 6"
+
+TODO="-doMajorMinor 1 -doMaf 1 -dosnpstat 1 -doPost 2 -doGeno 11 -doGlf 2"
+
+echo '#!/bin/bash' > MCAVPopStats.sh
+echo srun angsd -b bamsNoClones -GL 1 $FILTERS $TODO -P 1 -out MCAVPopStats >> MCAVPopStats.sh
+
+sbatch --mem=200GB -o MCAVPopStats.o%j -e MCAVPopStats.e%j -p shortq7 --mail-type=ALL --mail-user=sydneybell2021@fau.edu MCAVPopStats.sh
+
+mv MCAVPopStats* angsdPopStats/
+cd angsdPopStats
+#How many sites?
+
+grep "filtering:" MCAVPopStats.e*
+-> Number of sites retained after filtering: 1,870,157
+
+#Calculate heterozygosity
+
+echo '#!/bin/bash' > RHet.sh
+echo heterozygosity_beagle.R MCAVPopStats.beagle.gz >> RHet.sh
+
+sbatch -e RHet.e%j -o RHet.o%j --mem=200GB --mail-user sydneybell2021@fau.edu --mail-type=ALL RHet.sh
+
+cp RHet.e* hetAllSites
+
+#OFAV
+
+echo '#!/bin/bash' > RHetVar.sh
+echo heterozygosity_beagle.R OFAVNoClones.beagle.gz >> RHetVar.sh
+
+sbatch -e RHet.e%j -o RHet.o%j --mem=200GB --mail-user sydneybell2021@fau.edu --mail-type=ALL RHetVar.sh
+
+cp RHet.e* hetSnps2
+
+mkdir angsdPopStats
+Note there are no MAF or snp filters so as not to affect allelic frequencies that may change heterozygosity calculations
+
+FILTERS="-uniqueOnly 1 -remove_bads 1  -skipTriallelic 1 -minMapQ 20 -minQ 30 -doHWE 1 -sb_pval 1e-5 -hetbias_pval 1e-5 -minInd 13"
+
+TODO="-doMajorMinor 1 -doMaf 1 -dosnpstat 1 -doPost 2 -doGeno 11 -doGlf 2"
+
+echo '#!/bin/bash' > OFAVPopStats.sh
+echo srun angsd -b bamsNoClones -GL 1 $FILTERS $TODO -P 1 -out OFAVPopStats >> OFAVPopStats.sh
+
+sbatch --mem=200GB -o OFAVPopStats.o%j -e OFAVPopStats.e%j -p shortq7 --mail-type=ALL --mail-user=sydneybell2021@fau.edu OFAVPopStats.sh
+
+mv OFAVPopStats* angsdPopStats/
+cd angsdPopStats
+#How many sites?
+
+grep "filtering:" OFAVPopStats.e7893391
+-> Number of sites retained after filtering: 1,657,800
+
+
+#Calculate heterozygosity (have this for SNPs but keep getting maxiterations warning for hetAllSites)
+
+
+cp RHet.e7893391 hetAllSites
+
+#PCLI
+
+echo '#!/bin/bash' > RHetVar.sh
+echo heterozygosity_beagle.R PCLINoClones.beagle.gz >> RHetVar.sh
+
+sbatch -e RHet.e%j -o RHet.o%j --mem=200GB --mail-user sydneybell2021@fau.edu --mail-type=ALL RHetVar.sh
+
+cp RHet.e* hetSnps
+
+mkdir angsdPopStats
+Note there are no MAF or snp filters so as not to affect allelic frequencies that may change heterozygosity calculations
+
+FILTERS="-uniqueOnly 1 -remove_bads 1  -skipTriallelic 1 -minMapQ 20 -minQ 30 -doHWE 1 -sb_pval 1e-5 -hetbias_pval 1e-5 -minInd 13"
+
+TODO="-doMajorMinor 1 -doMaf 1 -dosnpstat 1 -doPost 2 -doGeno 11 -doGlf 2"
+
+echo '#!/bin/bash' > PCLIPopStats.sh
+echo srun angsd -b bamsNoClones -GL 1 $FILTERS $TODO -P 1 -out PCLIPopStats >> PCLIPopStats.sh
+
+sbatch --mem=200GB -o PCLIPopStats.o%j -e PCLIPopStats.e%j -p shortq7 --mail-type=ALL --mail-user=sydneybell2021@fau.edu PCLIPopStats.sh
+
+mv PCLIPopStats* angsdPopStats/
+cd angsdPopStats
+#How many sites?
+
+grep "filtering:" PCLIPopStats.e7893399
+ -> Number of sites retained after filtering: 1,568,544
+
+
+#Calculate heterozygosity
+
+
+cp RHet.e* hetAllSites
+
+__________________________________________________________
+
+P O P U L A T I O N   S T R U C T U R E
+Calculate population structure from genotype likelihoods using NGSadmix for K from 2 to 11 : FIRST remove all clones/genotyping replicates! (we did this).
+
+mkdir ../ngsAdmix
+cp *beagle* ../ngsAdmix
+
+zipper.py -f bam -a -9 --launcher -e sydneybell2021@fau.edu
+sbatch zip.slurm
+
+cd ../ngsAdmix
+Create a file with 50 replicate simulations for each value of K 1-11 (num pops + 3)
+
+ngsAdmixLauncher.py -f OFAVNoClones.beagle.gz --maxK 11 -r 50 -n rtt --launcher -e sydneybell2021@fau.edu
+sbatch --mem=200GB rttNgsAdmix.slurm
+
+Calculating most likely value of K
+Next, take the likelihood value from each run of NGSadmix and put them into a file that can be used with Clumpak to calculate the most likely K using the methods of Evanno et al. (2005).
+
+>OFAVNgsAdmixLogfile
+for log in rtt*.log; do
+grep -Po 'like=\K[^ ]+' $log >> OFAVNgsAdmixLogfile;
+done
+
+#after formatting in R
+
+cat MCAVNgsAdmixLogfile_formatted | wc -l
+make copies of .qopt files to run structure selector on (.Q files)
+
+for file in rtt*.qopt; do
+filename=$(basename -- "$file" .qopt);
+cp "$file" "$filename".Q;
+done
+
+mkdir MCAVQ
+mv rtt*Q MCAVQ
+
+zip -r MCAVQ.zip MCAVQ
+
+_______________________________________________________
+
+##INSTALL PCANGSD##
+cd ~/bin
+
+git clone https://github.com/Rosemeis/pcangsd.git
+cd pcangsd
+
+conda activate 2bRAD
+pip install --user -r requirements.txt
+
+python setup.py build_ext --inplace
+
+pip3 install -e .
+
+###
+
+cd ~/2bRAD_RTT/pcli/pcliONLYmappedReads
+mkdir pcangsd
+cd pcangsd
+
+cp ../mcavANGSD/MCAVNoClones.beagle.gz .
+
+source activate 2bRAD
+
+echo '#!/bin/bash' > pcangsd.sh
+echo 'pcangsd -b OFAVNoClones.beagle.gz -o OFAVPcangsd --admix --inbreedSamples --pcadapt' >> pcangsd.sh
+
+sbatch -o pcangsd.o%j -e pcangsd.e%j --mem=100GB pcangsd.sh
