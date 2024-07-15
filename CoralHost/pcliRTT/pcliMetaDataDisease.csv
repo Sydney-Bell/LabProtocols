@@ -1,0 +1,24 @@
+SAMPLE,Bams,Source Colony ID,sampleID,Source,Disease,Treated,Date Collected,Nursery,Species,Preserved Method
+50,rtt_50,PC17,PC_002,FWC,Y,N,5/3/2021,in situ,PCLI,DNA Shield
+51,rtt_51,PC23,PC_003,FWC,Y,N,5/3/2021,in situ,PCLI,DNA Shield
+52,rtt_52,PC1 ,PC_004,FWC,N,N,5/3/2021,in situ,PCLI,DNA Shield
+53,rtt_53,PC21,PC_005,FWC,N,N,5/3/2021,in situ,PCLI,DNA Shield
+54,rtt_54,PC10,PC_006,FWC,Y,N,5/3/2021,in situ,PCLI,DNA Shield
+55,rtt_55,PC5,PC_007,UM,N,N,5/3/2021,in situ,PCLI,DNA Shield
+57,rtt_57,PC2,PC_009,FWC,N,N,5/3/2021,in situ,PCLI,DNA Shield
+58,rtt_58,PC6,PC_010,UM,Y,N,5/3/2021,in situ,PCLI,DNA Shield
+59,rtt_59,PC26,PC_011,FWC,Y,N,5/3/2021,in situ,PCLI,DNA Shield
+60,rtt_60,PC29,PC_012,FWC,N,N,5/3/2021,in situ,PCLI,DNA Shield
+61,rtt_61,PC11,PC_013,FWC,Y,N,5/3/2021,in situ,PCLI,DNA Shield
+62,rtt_62,PC18,PC_014,FWC,Y,N,5/3/2021,in situ,PCLI,DNA Shield
+63,rtt_63,PC27,PC_015X,FWC,Y,N,5/3/2021,in situ,PCLI,DNA Shield
+64,rtt_64,PC3,PC_016,RR,Y,N,5/3/2021,in situ,PCLI,DNA Shield
+65,rtt_65,PC13,PC_017,RR,Y,N,5/3/2021,in situ,PCLI,DNA Shield
+66,rtt_66,PC4,PC_018,UM,N,N,5/3/2021,in situ,PCLI,DNA Shield
+67,rtt_67,PC2,PC_019,UM,Y,N,5/3/2021,in situ,PCLI,DNA Shield
+68,rtt_68,PC3,PC_020,UM,N,N,5/3/2021,in situ,PCLI,DNA Shield
+69,rtt_69,PC25,PC_021,FWC,Y,N,5/3/2021,in situ,PCLI,DNA Shield
+70,rtt_70,PC14,PC_022,RR,N,N,5/3/2021,in situ,PCLI,DNA Shield
+71,rtt_71,PC15,PC_023,RR,Y,N,5/3/2021,in situ,PCLI,DNA Shield
+74,rtt_74,PC12,PC_026,MOTE,N,N,5/3/2021,?,PCLI,DNA Shield
+75,rtt_75,PC17,PC_027,MOTE,Y,N,5/3/2021,?,PCLI,DNA Shield
