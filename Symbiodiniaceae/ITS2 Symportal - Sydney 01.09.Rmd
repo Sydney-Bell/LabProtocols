@@ -1,0 +1,1214 @@
+---
+title: "ITS2rtt Symportal R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+Analysis of algal symbiont types from RTT source colonies.  
+
+```{r}
+#Install packages
+if (!require("pacman")) install.packages("pacman")
+
+pacman::p_load_gh("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis", "ropensci/rnaturalearthhires")
+
+pacman::p_load("cowplot", "car", "ggrepel", "ggspatial", "paletteer", "patchwork", "rgdal", "rnaturalearth", "sf", "Hmisc", "MCMC.OTU", "pairwiseAdonis", "RColorBrewer", "Redmonder", "flextable", "lubridate", "officer", "adegenet", "dendextend", "gdata", "ggdendro", "hierfstat", "Imap", "kableExtra", "poppr", "reshape2", "StAMPP", "vcfR", "vegan", "boa", "magick", "rgeos", "sdmpredictors", "ggcorrplot", "tidyverse", "TeachingDemos", "LaplacesDemon", "adespatial", "ggnewscale")
+
+options("scipen" = 10)
+
+library(dplyr)
+
+```
+
+Loading ITS2 sequence data into R
+```{r}
+#C:\Users\Student\OneDrive - Florida Atlantic University\FAU\MS THESIS\ITS2 RTT
+its2Prof = read.csv(file.choose(), stringsAsFactors = FALSE)
+#its2Prof = read.delim("DBV_20220914T020849.profiles.absolute.abund.and.meta.txt", header = TRUE, check.names = FALSE)
+head(its2Prof)
+
+its2MetaData = read.csv(file.choose(), stringsAsFactors = FALSE)
+head(its2MetaData)
+
+its2Prof = left_join(its2Prof, its2MetaData)
+head(its2Prof)
+
+its2Prof = its2Prof[c(1,16:length(its2Prof),2:15)]
+
+its2Prof$disease.status = factor(its2Prof$disease.status, levels = c("0", "1"))
+levels(its2Prof$disease.status)
+
+its2Prof$source = factor(its2Prof$source, levels = c("CRF","FWC","MOTE","RR","UM"))
+levels(its2Prof$source)
+
+its2Prof$species = factor(its2Prof$species, levels = c("MCAV","OFAV","PCLI"))
+levels(its2Prof$species)
+
+its2Prof = its2Prof[order(its2Prof$species, its2Prof$source, its2Prof$disease.status), ]
+
+head(its2Prof)
+```
+
+```{r}
+its2Prof = its2Prof %>% arrange(species, source, desc(`C3.C3de.C3bb.C21ae.C3an.C3s.C21.C3dk`),  desc(`C3.C3fc.C21.C3an.C3b.C3bb.C3fd.C3s`), desc(`C3.C21.C3an`), desc(`C3.C21.C3b`), desc(`C3an.C3.C21.C3bb`), desc(`B1.B14e.B1x.B1ai.B1ao.B14c.B1j.B1am.B1an`), desc(`B1.B1by.B1dm.B14h.B1x`), desc(`B1.B1by.B1au.B1bw`), desc(`B1.B1x.B14d.B1ao.B1co`),desc(`B1.B1by.B1dm`), desc(`A4`), desc(`D1.D4.D4c.D1c.D2.D1k`), desc(`D1.D4.D2.D4c.D1c.D1h`), desc(`D1.D4.D4c.D1c.D1h`))
+                                  
+
+sampleCounts = plyr::count(its2Prof, c('species','source'))
+meltedList = reshape2::melt(lapply(sampleCounts$freq,function(x){c(1:x)}))
+its2Prof$barPlotOrder = meltedList$value
+its2Prof = its2Prof[c(1,ncol(its2Prof),2:(ncol(its2Prof)-1))]
+
+head(its2Prof)
+
+sampleCounts2 = plyr::count(its2Prof, c('species','disease.status'))
+meltedList = reshape2::melt(lapply(sampleCounts2$freq,function(x){c(1:x)}))
+
+its2Prof = its2Prof %>% arrange(species,disease.status)
+
+its2Prof$barPlotOrderDisease = meltedList$value
+its2Prof = its2Prof[c(1,ncol(its2Prof),2:(ncol(its2Prof)-1))]
+
+head(its2Prof)
+```
+
+## Prep ITS2 type profiles for plotting
+```{r}
+its2ProfsPerc = its2Prof
+its2ProfsPerc$sum = apply(its2ProfsPerc[, c(14:27)], 1, function(x) {
+sum(x, na.rm = T)
+})
+
+its2ProfsPerc = cbind(its2ProfsPerc[, c(1:13)], (its2ProfsPerc[, c(14:27)]
+/ its2ProfsPerc$sum))
+head(its2ProfsPerc)
+
+# check that all proportions add up to 1
+apply(its2ProfsPerc[, c(14:(ncol(its2ProfsPerc)))], 1, function(x) {
+sum(x, na.rm = T)
+})
+
+```
+Everything looks good and is ready to plot
+
+```{r}
+gssProf = otuStack(its2ProfsPerc, count.columns = c(14:length(its2ProfsPerc[1, ])),
+ condition.columns = c(1:13)) %>% filter(otu != "summ") %>% droplevels() # remove sum rows
+
+levels(gssProf$otu)
+levels(gssProf$species)
+levels(gssProf$source)
+levels(gssProf$disease.status)
+
+```
+
+Construct ITS2 type profile barplot by source and species
+
+```{r}
+
+# Install
+install.packages("pals")
+# Load
+library("pals")
+
+flPal = paletteer_d("vapoRwave::jazzCup")[c(1:5)]
+
+popAnno = data.frame(x1 = c(0.5, 0.5, 0.5, 0.5, 0.5), x2 = c(8.5, 14.5, 15.5, 4.5, 8.5), y1 = c(-1.178,-0.14,-0.14,-0.14,-0.14), y2 = c(-1.178,-0.14,-0.14,-0.14,-0.14), source = c("CRF","FWC","MOTE", "RR", "UM"))
+
+popAnno$source = factor(popAnno$source)
+ 
+gssProfPlot = gssProf %>% left_join(popAnno, by = "source")
+
+
+its2ProfsPlotA = ggplot(gssProfPlot, aes(x = barPlotOrder, y = count, fill = otu)) +
+  geom_bar(position = "stack", stat = "identity", color = "gray25", size = 0.25) + 
+  scale_fill_manual(values = stepped(14)) +
+  scale_color_manual(values = flPal) +
+  geom_segment(aes(x = x1, xend = x2, y = y1, yend = y2, color = source), size = 8) +
+  labs(fill = expression(paste(italic("ITS2"), " type profile"))) +
+  guides(color = "none", fill = guide_legend(ncol = 3, reverse = FALSE)) +
+  facet_grid(factor(species) ~ source, scales = "free", switch = "both", space = "free") + 
+  scale_x_discrete(expand = c(0.03, 0.03)) +
+  scale_y_continuous(expand = c(0.002, 0.002)) +
+  coord_cartesian(ylim = c(-.01, 1.01), clip = "off") +
+theme_bw()
+
+its2ProfsPlot = its2ProfsPlotA +
+theme(plot.title = element_text(),
+  panel.grid = element_blank(),
+  panel.background = element_rect(fill = "gray25", colour = "gray25"),
+  panel.border = element_rect(fill = NA, color = "black", size = 1, linetype = "solid"),
+  panel.spacing.x = grid:::unit(0.05, "lines"),
+  panel.spacing.y = grid:::unit(0.05, "lines"),
+  axis.text.x = element_blank(),
+  axis.text.y = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.ticks.y = element_blank(),
+  axis.title = element_blank(),
+  strip.background.x = element_blank(),
+  strip.background.y = element_blank(),
+  strip.text = element_text(size = 12),
+  strip.text.y.left = element_text(angle = 90),
+  strip.text.x.bottom = element_text(vjust = 0, color = "grey90"),
+  legend.key.size = unit(0.75, "line"),
+  legend.key = element_blank(),
+  legend.title = element_text(size = 10, angle = 90),
+  legend.text = element_text(size = 8),
+  legend.position = "bottom")
+
+its2ProfsPlot
+
+ggsave("its2ProfBar4.png", plot = its2ProfsPlot, height = 15, width = 20, units = "cm", dpi = 300)
+
+```
+Construct ITS2 type profile barplot by disease susceptibility and species
+
+```{r}
+# Load
+library("pals")
+
+flPal = paletteer_d("vapoRwave::jazzCup")[c(1:5)]
+
+popAnno2 = data.frame(x1 = c(0.5, 0.5), x2 = c(14.5, 26.5), y1 = c(-0.2,-0.2), y2 = c(-0.2,-0.2), disease.status = c("0","1"))
+
+popAnno2$disease.status = factor(popAnno2$disease.status)
+ 
+gssProfPlot = gssProf %>% left_join(popAnno2, by = "disease.status")
+
+
+its2ProfsPlotB = ggplot(gssProfPlot, aes(x = barPlotOrderDisease, y = count, fill = otu)) +
+  geom_bar(position = "stack", stat = "identity", color = "gray25", size = 0.25) + 
+  scale_fill_manual(values = stepped(14)) +
+  scale_color_manual(values = flPal) +
+  geom_segment(aes(x = x1, xend = x2, y = y1, yend = y2, color = disease.status), linewidth = 7) +
+  labs(fill = expression(paste(italic("ITS2"), " type profile"))) +
+  guides(color = "none", fill = guide_legend(ncol = 2, reverse = FALSE)) +
+  facet_grid(factor(species) ~ disease.status, scales = "free", switch = "both", space = "free") + 
+  scale_x_discrete(expand = c(0.035, 0.035)) +
+  scale_y_continuous(expand = c(0.002, 0.002)) +
+  coord_cartesian(ylim = c(-.01, 1.01), clip = "off") +
+theme_bw()
+
+its2ProfsPlot = its2ProfsPlotB +
+theme(plot.title = element_text(),
+  panel.grid = element_blank(),
+  panel.background = element_rect(fill = "gray25", colour = "gray25"),
+  panel.border = element_rect(fill = NA, color = "black", size = 1, linetype = "solid"),
+  panel.spacing.x = grid:::unit(0.05, "lines"),
+  panel.spacing.y = grid:::unit(0.05, "lines"),
+  axis.text.x = element_blank(),
+  axis.text.y = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.ticks.y = element_blank(),
+  axis.title = element_blank(),
+  strip.background.x = element_blank(),
+  strip.background.y = element_blank(),
+  strip.text = element_text(size = 12),
+  strip.text.y.left = element_text(angle = 90),
+  strip.text.x.bottom = element_text(vjust = 0, color = "grey90"),
+  legend.key.size = unit(0.75, "line"),
+  legend.key = element_blank(),
+  legend.title = element_text(size = 10, angle = 90),
+  legend.text = element_text(size = 8),
+  legend.position = "bottom")
+
+its2ProfsPlot
+
+#ggsave("its2ProfBarDISEASE.png", plot = its2ProfsPlot, height = 15, width = 20, units = "cm", dpi = 300)
+
+```
+
+
+SNP vs ITS2 genera
+Pulling genera of Symbiodiniaceae from SNPS and comparing to genera of ITS2 profiles from SymPortal
+```{r}
+
+#("../data/ITS2.metadata.csv")
+popData = read.csv(file.choose(), stringsAsFactors = FALSE)[-c(7,8,29,30,77,78),] %>% dplyr::select("Sample" = sampleID, "source" = source, "species" = species)
+
+samplelist = read.csv(file.choose(), stringsAsFactors = FALSE)
+```
+
+MCAV: Upload zooxReads for MCAV
+```{r}
+
+MCAVzoox = read.delim(file.choose(), header = FALSE, check.names = FALSE)
+
+head(MCAVzoox)
+str(MCAVzoox)
+
+#Reconstruct read mapping output into dataframe usable for analysis
+MCAVzoox$V2[is.na(MCAVzoox$V2)] <- as.character(MCAVzoox$V1[is.na(MCAVzoox$V2)])
+MCAVzoox$V1 = gsub(pattern = "rtt_*", "chr", MCAVzoox$V1)
+MCAVzoox$V2 = gsub(".trim.*", "", MCAVzoox$V2)
+MCAVzoox = MCAVzoox %>% filter(MCAVzoox$V1 != "*")
+MCAVzooxLst = split(MCAVzoox$V2, as.integer(gl(length(MCAVzoox$V2), 20, length(MCAVzoox$V2))))
+
+str(MCAVzooxLst)
+
+MCAVzooxMaps = NULL
+
+for(i in MCAVzooxLst){
+  MCAVzooxMaps = rbind(MCAVzooxMaps, data.frame(t(i)))
+}
+
+
+#rename columns and samples to match other ITS2 dataframe
+MCAVzooxMaps$X1 = gsub("rtt", "rtt", MCAVzooxMaps$X1)
+MCAVzooxMaps$X1 = gsub("\\.[1-3]", "", MCAVzooxMaps$X1)
+colnames(MCAVzooxMaps) = c("RTT",MCAVzoox$V1[c(2:20)])
+MCAVzooxMaps = MCAVzooxMaps %>% left_join(samplelist) 
+
+#convert characters to numeric
+str(MCAVzooxMaps)
+
+for(i in c(2:20)){
+  MCAVzooxMaps[,i] = as.numeric(MCAVzooxMaps[,i])
+  }
+
+str(MCAVzooxMaps)
+
+#collapse fake chromosomes into representative genera
+MCAVzooxMaps$Symbiodinium = rowSums(MCAVzooxMaps[2:6])
+MCAVzooxMaps$Breviolum = rowSums(MCAVzooxMaps[7:10])
+MCAVzooxMaps$Cladocopium = rowSums(MCAVzooxMaps[11:16])
+MCAVzooxMaps$Durusdinium = rowSums(MCAVzooxMaps[17:20])
+
+#keep genera totals and turn into proportions for barplot
+MCAVzooxMaps = MCAVzooxMaps[,c(1, 21:24)]
+MCAVzooxProp = MCAVzooxMaps
+MCAVzooxProp$sum = apply(MCAVzooxProp[, c(3:length(MCAVzooxProp[1,]))], 1, function(x) {
+sum(x, na.rm = T)
+})
+MCAVzooxProp = cbind(MCAVzooxProp$RTT, (MCAVzooxProp[, c(3:(ncol(MCAVzooxProp)-1))]
+/ MCAVzooxProp$sum))
+
+colnames(MCAVzooxProp)[1] = "RTT"
+
+head(MCAVzooxProp)
+
+#Check that all samples total to 1
+apply(MCAVzooxProp[, c(2:(ncol(MCAVzooxProp)))], 1, function(x) {
+sum(x, na.rm = T)
+})
+
+#add sample metadata to proportions, joining by "sampleID"
+colnames(popData)[1] = "sampleID"
+MCAVsnpSym = popData %>% left_join(samplelist) %>% left_join(MCAVzooxProp) %>% filter(Symbiodinium!="NA")
+```
+
+OFAV: Upload zooxReads for OFAV
+```{r}
+
+OFAVzoox = read.delim(file.choose(), header = FALSE, check.names = FALSE)
+
+head(OFAVzoox)
+str(OFAVzoox)
+
+#Reconstruct read mapping output into dataframe usable for analysis
+OFAVzoox$V2[is.na(OFAVzoox$V2)] <- as.character(OFAVzoox$V1[is.na(OFAVzoox$V2)])
+OFAVzoox$V1 = gsub(pattern = "rtt_*", "chr", OFAVzoox$V1)
+OFAVzoox$V2 = gsub(".trim.*", "", OFAVzoox$V2)
+OFAVzoox = OFAVzoox %>% filter(OFAVzoox$V1 != "*")
+OFAVzooxLst = split(OFAVzoox$V2, as.integer(gl(length(OFAVzoox$V2), 20, length(OFAVzoox$V2))))
+
+str(OFAVzooxLst)
+
+OFAVzooxMaps = NULL
+
+for(i in OFAVzooxLst){
+  OFAVzooxMaps = rbind(OFAVzooxMaps, data.frame(t(i)))
+}
+
+
+#rename columns and samples to match other ITS2 dataframe
+OFAVzooxMaps$X1 = gsub("rtt", "rtt", OFAVzooxMaps$X1)
+OFAVzooxMaps$X1 = gsub("\\.[1-3]", "", OFAVzooxMaps$X1)
+colnames(OFAVzooxMaps) = c("Sample",OFAVzoox$V1[c(2:20)])
+
+#convert characters to numeric
+str(OFAVzooxMaps)
+
+for(i in c(2:20)){
+  OFAVzooxMaps[,i] = as.numeric(OFAVzooxMaps[,i])
+  }
+
+str(OFAVzooxMaps)
+
+#collapse fake chromosomes into representative genera
+OFAVzooxMaps$Symbiodinium = rowSums(OFAVzooxMaps[2:6])
+OFAVzooxMaps$Breviolum = rowSums(OFAVzooxMaps[7:10])
+OFAVzooxMaps$Cladocopium = rowSums(OFAVzooxMaps[11:16])
+OFAVzooxMaps$Durusdinium = rowSums(OFAVzooxMaps[17:20])
+
+#keep genera totals and turn into proportions for barplot
+OFAVzooxMaps = OFAVzooxMaps[,c(1, 21:24)]
+OFAVzooxProp = OFAVzooxMaps
+OFAVzooxProp$sum = apply(OFAVzooxProp[, c(2:length(OFAVzooxProp[1,]))], 1, function(x) {
+sum(x, na.rm = T)
+})
+OFAVzooxProp = cbind(OFAVzooxProp$Sample, (OFAVzooxProp[, c(2:(ncol(OFAVzooxProp)-1))]
+/ OFAVzooxProp$sum))
+
+colnames(OFAVzooxProp)[1] = "RTT"
+
+head(OFAVzooxProp)
+
+#Check that all samples total to 1
+apply(OFAVzooxProp[, c(2:(ncol(OFAVzooxProp)))], 1, function(x) {
+sum(x, na.rm = T)
+})
+
+#add sample metadata to proportions, joining by "sampleID"
+OFAVsnpSym = popData %>% left_join(samplelist) %>% left_join(OFAVzooxProp) %>% filter(Symbiodinium!="NA")
+```
+
+PCLI: Upload zooxReads for PCLI
+```{r}
+
+PCLIzoox = read.delim(file.choose(), header = FALSE, check.names = FALSE)
+
+head(PCLIzoox)
+str(PCLIzoox)
+
+#Reconstruct read mapping output into dataframe usable for analysis
+PCLIzoox$V2[is.na(PCLIzoox$V2)] <- as.character(PCLIzoox$V1[is.na(PCLIzoox$V2)])
+PCLIzoox$V1 = gsub(pattern = "rtt_*", "chr", PCLIzoox$V1)
+PCLIzoox$V2 = gsub(".trim.*", "", PCLIzoox$V2)
+PCLIzoox = PCLIzoox %>% filter(PCLIzoox$V1 != "*")
+PCLIzooxLst = split(PCLIzoox$V2, as.integer(gl(length(PCLIzoox$V2), 20, length(PCLIzoox$V2))))
+
+str(PCLIzooxLst)
+
+PCLIzooxMaps = NULL
+
+for(i in PCLIzooxLst){
+  PCLIzooxMaps = rbind(PCLIzooxMaps, data.frame(t(i)))
+}
+
+#remove tech reps
+PCLIzooxMaps = PCLIzooxMaps[-c(23,24),]
+
+#rename columns and samples to match other ITS2 dataframe
+PCLIzooxMaps$X1 = gsub("rtt", "rtt", PCLIzooxMaps$X1)
+PCLIzooxMaps$X1 = gsub("\\.[1-3]", "", PCLIzooxMaps$X1)
+colnames(PCLIzooxMaps) = c("Sample",PCLIzoox$V1[c(2:20)])
+
+#convert characters to numeric
+str(PCLIzooxMaps)
+
+for(i in c(2:20)){
+  PCLIzooxMaps[,i] = as.numeric(PCLIzooxMaps[,i])
+  }
+
+str(PCLIzooxMaps)
+
+#collapse fake chromosomes into representative genera
+PCLIzooxMaps$Symbiodinium = rowSums(PCLIzooxMaps[2:6])
+PCLIzooxMaps$Breviolum = rowSums(PCLIzooxMaps[7:10])
+PCLIzooxMaps$Cladocopium = rowSums(PCLIzooxMaps[11:16])
+PCLIzooxMaps$Durusdinium = rowSums(PCLIzooxMaps[17:20])
+
+#keep genera totals and turn into proportions for barplot
+PCLIzooxMaps = PCLIzooxMaps[,c(1, 21:24)]
+PCLIzooxProp = PCLIzooxMaps
+PCLIzooxProp$sum = apply(PCLIzooxProp[, c(2:length(PCLIzooxProp[1,]))], 1, function(x) {
+sum(x, na.rm = T)
+})
+PCLIzooxProp = cbind(PCLIzooxProp$Sample, (PCLIzooxProp[, c(2:(ncol(PCLIzooxProp)-1))]
+/ PCLIzooxProp$sum))
+
+colnames(PCLIzooxProp)[1] = "RTT"
+
+head(PCLIzooxProp)
+
+#Check that all samples total to 1
+apply(PCLIzooxProp[, c(2:(ncol(PCLIzooxProp)))], 1, function(x) {
+sum(x, na.rm = T)
+})
+
+#add sample metadata to proportions, joining by "sampleID"
+PCLIsnpSym = popData %>% left_join(samplelist) %>% left_join(PCLIzooxProp) %>% filter(Symbiodinium!="NA")
+
+```
+
+Combining SNP and ITS2 data for comparison of Symbiodiniaceae genera. This will allow us to plot individuals in the same order across methods
+
+```{r}
+
+#colnames(MCAVsnpSym)[1] = "sampleID"
+#colnames(OFAVsnpSym)[1] = "sampleID"
+#colnames(PCLIsnpSym)[1] = "sampleID"
+#colnames(popData)[1] = "sampleID"
+
+#sum profiles into genera
+symGenera = its2Prof
+symGenera$itsSymbiodinium = rowSums(symGenera[13])
+symGenera$itsBreviolum = rowSums(symGenera[14:18])
+symGenera$itsCladocopium = rowSums(symGenera[19:23])
+symGenera$itsDurusdinium = rowSums(symGenera[24:26])
+
+symGenera = symGenera %>% dplyr::select(sampleID, barPlotOrder, itsSymbiodinium, itsBreviolum, itsCladocopium, itsDurusdinium)
+
+#convert to proportions
+symGenera$sum = apply(symGenera[, c(4:length(symGenera[1,]))], 1, function(x) {
+sum(x, na.rm = T)
+})
+
+symGeneraProp = cbind(symGenera$sampleID, symGenera[, c(4:(ncol(symGenera)-1))]
+/ symGenera$sum)
+
+colnames(symGeneraProp)[1] = "sampleID"
+
+#Check that all samples total to 1
+apply(symGeneraProp[,c(2:4)], 1, function(x) {
+sum(x, na.rm = T)
+})
+
+symGeneraProp = symGeneraProp %>% left_join(samplelist)
+```
+Combine all species snpGenera with symGenera
+
+```{r}
+#construct combined dataframe
+
+popData = popData %>% left_join(samplelist)
+symGenera = symGenera %>% left_join(samplelist)
+
+ALLsnpSym = OFAVsnpSym %>% add_row(MCAVsnpSym, .before=1) %>% add_row(PCLIsnpSym)
+
+symGenera = symGenera %>% dplyr::select(sampleID, barPlotOrder) %>% left_join(ALLsnpSym) %>% left_join(symGeneraProp) %>% filter(source!="NA")
+
+symGenera[is.na(symGenera)] <- 0
+
+symGenera$species = factor(symGenera$species)
+symGenera$species = factor(symGenera$species, levels = levels(symGenera$species)[c(1,2,3)])
+
+symGenera$source = factor(symGenera$source)
+symGenera$source = factor(symGenera$source, levels = levels(symGenera$source)[c(1,2,3,4,5)])
+
+#"CRF","FWC","MOTE","RR","UM"
+# symGenera$barPlotOrder[is.na(symGenera$barPlotOrder)] <- 30
+
+#turn into melted dataframe with otustack() and remove "summ" rows
+gssSym = otuStack(symGenera, count.columns = c(6:length(symGenera[1, ])),
+ condition.columns = c(1:5)) %>% filter(otu != "summ") %>% droplevels()
+
+#check that levels are correct/ordered
+levels(gssSym$otu)
+levels(gssSym$species)
+levels(gssSym$source)
+```
+Creating Symbiodiniaceae genera relative proportion barplots
+SNPs:
+```{r}
+colPalZoox = c("#247EA3", "#FFBF46", "#6A9FA1", "Purple3")
+
+popAnno = data.frame(x1 = c(0.5, 0.5, 0.5, 0.5, 0.5), x2 = c(8.5, 14.5, 15.5, 4.5, 8.5), y1 = c(-1.178,-0.14,-0.14,-0.14,-0.14), y2 = c(-1.178,-0.14,-0.14,-0.14,-0.14), source = c("CRF","FWC","MOTE", "RR", "UM"))
+
+popAnno$source = factor(popAnno$source)
+popAnno$source = factor(popAnno$source, levels = levels(popAnno$source))
+
+gssSymPlot = gssSym %>% left_join(popAnno, by = "source")
+
+zooxSNPA = ggplot(data = subset(gssSymPlot, subset = otu %in% c("Symbiodinium", "Breviolum", "Cladocopium", "Durusdinium" )), aes(x = barPlotOrder, y = count, fill = otu, order = barPlotOrder)) +
+  geom_point(aes(x=0, y=0, fill = otu), shape = 22, size = 0) +
+  geom_bar(stat = "identity", position = "stack", colour = "grey25", width = 1, size = 0.2, show.legend = FALSE) +
+  xlab("Population") +
+  scale_x_discrete(expand = c(0.035, 0.035)) +
+  scale_y_continuous(expand = c(0.002, 0.002)) +
+  scale_color_manual(values = rev(flPal)) +
+  geom_segment(aes(x = x1, xend = x2, y = y1, yend = y2, color = source), size = 7) +
+  scale_fill_manual(values = colPalZoox, name = "Symbiodiniaceae genus") +
+  coord_cartesian(ylim = c(-.01,1.01), clip = "off") +
+  facet_grid(factor(species) ~ source, drop = TRUE, scales = "free", switch = "both", space = "free") +
+  ggtitle("2bRAD") +
+  guides(fill = guide_legend(override.aes = list(size = 5), ncol = 1), color = "none")  +
+  theme_bw()
+
+zooxSNP = zooxSNPA + theme(plot.title = element_text(),
+  panel.grid = element_blank(),
+  panel.background = element_rect(fill = "gray25", colour = "grey25"),
+  panel.border = element_rect(fill = NA, color = "black", size = 1, linetype = "solid"),
+  panel.spacing.x = grid:::unit(0.05, "lines"),
+  panel.spacing.y = grid:::unit(0.05, "lines"),
+  axis.text.x = element_blank(),
+  axis.text.y = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.ticks.y = element_blank(),
+  axis.title = element_blank(),
+  strip.background.x = element_blank(),
+  strip.background.y = element_blank(),
+  strip.text = element_text(size = 12),
+  strip.text.y.left = element_text(size = 14, angle = 90),
+  strip.text.x.bottom = element_text(vjust = -.1, color = "grey90"),
+  legend.title = element_text(size = 10),
+  legend.text = element_text(size = 8, face = "italic"),
+  legend.key.size = unit(0.75, "line"),
+  legend.key = element_blank(),
+  legend.position = "bottom",
+  legend.direction = "vertical",
+  legend.box = "horizontal")
+
+zooxSNP
+ggsave("2bRADProfBar.png", plot = zooxSNP, height = 15, width = 20, units = "cm", dpi = 300)
+```
+Creating Symbiodiniaceae genera relative proportion barplots
+ITS2:
+```{r}
+zooxITSA = ggplot(data = subset(gssSymPlot, subset = !(otu %in% c("Symbiodinium", "Breviolum", "Cladocopium", "Durusdinium" ))), aes(x = barPlotOrder, y = count, fill = otu, order = barPlotOrder)) +
+  geom_point(aes(x=0, y=0, fill = otu), shape = 22, size = 0) +
+  geom_bar(stat = "identity", position = "stack", colour = "grey25", width = 1, size = 0.2, show.legend = FALSE) +
+  xlab("Population") +
+  scale_fill_manual(values = c("#FFBF46", "#6A9FA1", "Purple3"), name = "Symbiodiniaceae genus", labels = c("Breviolum", "Cladocopium", "Durusdinium")) +
+  scale_color_manual(values = rev(flPal)) +
+  geom_segment(aes(x = x1, xend = x2, y = y1, yend = y2, color = source), size = 7) +
+  coord_cartesian(ylim = c(-.01,1.01), clip = "off") +
+  scale_x_discrete(expand = c(0.035, 0.035)) +
+  scale_y_continuous(expand = c(0.002, 0.002)) +
+  facet_grid(factor(species) ~ source, drop = TRUE, scales = "free", switch = "both", space = "free") +
+  guides(fill = guide_legend(override.aes = list(size = 5), ncol = 1), color = "none")  +
+  labs(title = expression(italic("ITS2"))) +
+  theme_bw()
+
+zooxITS = zooxITSA + theme(plot.title = element_text(),
+  panel.grid = element_blank(),
+  panel.background = element_rect(fill = "gray25", colour = "grey25"),
+  panel.border = element_rect(fill = NA, color = "black", size = 1, linetype = "solid"),
+  panel.spacing.x = grid:::unit(0.05, "lines"),
+  panel.spacing.y = grid:::unit(0.05, "lines"),
+  axis.text.x = element_blank(),
+  axis.text.y = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.ticks.y = element_blank(),
+  axis.title = element_blank(),
+  strip.background.x = element_blank(),
+  strip.background.y = element_blank(),
+  strip.text = element_text(size = 12),
+  strip.text.y.left = element_text(size = 12, angle = 90),
+  strip.text.x.bottom = element_text(vjust = -.1, color = "grey90"),
+  legend.title = element_text(size = 10),
+  legend.text = element_text(size = 8, face = "italic"),
+  legend.key = element_blank(),
+  legend.key.size = unit(0.1, "line"),
+  legend.position = "bottom",
+  legend.direction = "vertical",
+  legend.box = "horizontal")
+ 
+zooxITS
+ggsave("zooxITS2.png", plot = zooxITS, height = 15, width = 20, units = "cm", dpi = 300)
+
+```
+Symbiodiniaceae Barplots
+
+```{r}
+its2Plots = (its2ProfsPlot + theme(legend.position = "right",  legend.title = element_text(angle = 0)) & guides(color = "none", fill = guide_legend(ncol = 1, reverse = FALSE)))/zooxSNP/zooxITS +
+  plot_annotation(tag_levels = "A") &
+  theme(plot.tag = element_text(size = 16), 
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "right",
+        legend.title = element_text(color = "black", size = 10),
+        legend.text = element_text(color = "black", size = 8))
+
+its2Plots
+
+ggsave("../figures/figure7.png", plot = its2Plots, height = 26, width = 20, units = "cm", dpi = 300)
+ggsave("../figures/figure7.svg", plot = its2Plots, height = 26, width = 20, units = "cm", dpi = 300)
+```
+
+Comapring SNPs and ITS2 outputs with Procrustes analysis
+```{r}
+#popData = read.csv("../data/stephanocoeniaMetaData.csv")[-c(7,8,29,30,77,78),] %>% dplyr::select("Sample" = tubeID, "source" = source, "species" = species)
+
+colnames(OFAVzooxMaps)[1] <- "RTT"
+colnames(PCLIzooxMaps)[1] <- "RTT"
+ALLzooxMaps = OFAVzooxMaps %>% left_join(samplelist) %>% add_row(MCAVzooxMaps, .before=1) %>% add_row(PCLIzooxMaps)
+
+symSnpDf = ALLzooxMaps %>% left_join(popData) %>% relocate(c(source, species), .after = sampleID) %>% mutate(dataSet = "SNPs") %>% relocate(dataSet, .after = sampleID)
+## Joining, by = "Sample"
+symSnpDf
+rownames(symSnpDf) = symSnpDf$Sample
+
+symITS2 = its2Prof
+symITS2$Symbiodinium = rowSums(symITS2[13])
+symITS2$Breviolum = rowSums(symITS2[14:18])
+symITS2$Cladocopium = rowSums(symITS2[19:23])
+symITS2$Durusdinium = rowSums(symITS2[24:26]) 
+
+symITS2Df = symITS2 %>% dplyr::select(sampleID, Symbiodinium, Breviolum, Cladocopium, Durusdinium) %>% left_join(popData) %>% relocate(c(source, species), .after = sampleID) %>% arrange(sampleID) %>% mutate(dataSet = "ITS2") %>% relocate(dataSet, .after = sampleID) %>% na.omit(source)
+## Joining, by = "sampleID"
+rownames(symITS2Df) = symITS2Df$sampleID
+
+##remove samples 12, 44, 49, 56 (they didn't run in the 2bRAD data set)
+symITS2Df2 <- symITS2Df[!(row.names(symITS2Df) %in% c("MC_012","OF_027RX","PC_001RX", "PC_008")),]
+
+#create distance matrices
+symSnpDf[is.na(symSnpDf)] = 0
+symSnpdist = vegdist(decostand(symSnpDf[c(2:5)], method = "normalize"), method = "bray")
+    
+symITS2dist = vegdist(decostand(symITS2Df2[c(5:8)], method = "normalize"), method = "bray")
+
+snpPcOA = cmdscale(symSnpdist, eig = TRUE, x.ret = TRUE)
+its2PcOA = cmdscale(symITS2dist, eig = TRUE, x.ret = TRUE)
+
+#procrustes analysis
+its2GeneraProcrustes = protest(Y = its2PcOA, X = snpPcOA, choices = c(1, 2), 
+permutations = 9999, symmetric = FALSE)
+
+
+its2GeneraProcrustes
+
+plot(its2GeneraProcrustes, kind = 1)
+
+plot(its2GeneraProcrustes, kind = 2)
+
+new_popData = read.csv("../new_popData.csv", stringsAsFactors = FALSE)
+
+library("vegan")
+symGenProcPlot = procrustes(X = snpPcOA, Y = its2PcOA, choices = c(1, 2), symmetric = FALSE)
+
+symGenProcPlotData = cbind(symGenProcPlot$X, symGenProcPlot$Yrot) %>% as.data.frame()
+rownames(symGenProcPlotData) = rownames(symGenProcPlot$X)
+colnames(symGenProcPlotData) = c("x1", "y1", "x2", "y2")
+symGenProcPlotData$sample.number = row.names(new_popData)
+colnames(symGenProcPlotData)[5] = "sample.number"
+symGenProcPlotData$sample.number = gsub(pattern = "\\.2", "", symGenProcPlotData$sample)
+symGenProcPlotData$sample.number = as.integer(symGenProcPlotData$sample.number)
+symGenProcPlotData = symGenProcPlotData %>% left_join(new_popData) %>% relocate(sampleID, .before = x1) %>% na.omit()
+
+## Joining, by = "sample.number"
+symGenProcPlotData$species = factor(symGenProcPlotData$species)
+symGenProcPlotData$species = factor(symGenProcPlotData$species, levels(symGenProcPlotData$species))
+symGenProcPlotData$source = factor(symGenProcPlotData$source)
+symGenProcPlotData$source = factor(symGenProcPlotData$source, levels(symGenProcPlotData$source))
+  
+head(symGenProcPlotData)
+
+#Calculate the angle of rotation, and then the slope of the rotated axis
+theta = acos(symGenProcPlot$rotation[1,1]) 
+slope = tan(theta)
+
+#Calculate the y-intercepts for rotated axes
+symGenProcInt = symGenProcPlot$translation[2] - (slope*symGenProcPlot$translation[1])
+symGenProcInt2 = symGenProcPlot$translation[2] - (-1/slope*symGenProcPlot$translation[1])
+
+rttSymGenProcPlotA = ggplot() +
+  geom_hline(yintercept = 0, color = "gray90", linetype = 1) +
+  geom_vline(xintercept = 0, color = "gray90", linetype = 1) +
+  geom_abline(intercept = symGenProcInt, slope = slope, color = "gray75", linetype = 2) +
+  geom_abline(intercept = symGenProcInt2, slope = -(1/slope), color = "gray75", linetype = 2) +
+    geom_segment(data = symGenProcPlotData, aes(x = x2*(1-symGenProcPlot$scale), y = y2*(1-symGenProcPlot$scale), xend = x1*(1-symGenProcPlot$scale), yend = y1*(1-symGenProcPlot$scale), color = source), alpha = 0.5) +
+  geom_point(data = symGenProcPlotData, aes(x = x2*(1-symGenProcPlot$scale), y = y2*(1-symGenProcPlot$scale), fill = source, shape = species), alpha = 0.5)+
+  geom_point(data = symGenProcPlotData, aes(x = x1*(1-symGenProcPlot$scale), y = y1*(1-symGenProcPlot$scale), fill = source, shape = species), size = 2) +
+  annotate(geom = "label", x = 0.172, y = 0.172, label = "           ", size = 10) +
+  annotate(geom = "text", x = 0.172, y = 0.1825, label = "Procrustes analysis:", size = 3) +
+  annotate(geom = "text", x = 0.172, y = 0.165, label = "italic(t[0]) == 0.9175 *','~italic(p) < 0.0001", parse = TRUE, size = 3) +
+  scale_color_manual(values = flPal) +
+  scale_fill_manual(values = flPal, name = "source") +
+  scale_shape_manual(values = c(23, 24, 25), name = "species") +
+  guides(color = "none", fill = guide_legend(override.aes = list(shape = 15, color = flPal, size = 3), ncol =2, order = 1), shape = guide_legend(ncol = 1)) +
+  theme_bw()
+
+rttSymGenProcPlot = rttSymGenProcPlotA +
+  theme(panel.grid = element_blank(),
+        panel.border = element_rect(color = "black", size = 0.75, fill = NA),
+        axis.title = element_blank(),
+        axis.ticks = element_line(color = "black"),
+        axis.text = element_text(color = "black", size = 8),
+        legend.position = "bottom",
+        legend.direction = "vertical",
+        legend.box = "horizontal",
+        legend.key = element_blank(),
+        legend.background = element_blank(),
+        legend.title = element_text(color = "black", size = 8),
+        legend.text = element_text(color = "black", size = 8)
+        )
+
+rttSymGenProcPlot
+```
+Host genetic distance vs Symbiodiniaceae B-C distance (do this for each species)
+
+MCAV
+```{r}
+
+library(dplyr)
+its2DistA = its2Prof %>% arrange(sampleID)
+its2Distp <- its2DistA %>% filter(sample.number > 50) 
+#remove tech reps and clones
+its2Distp <- its2Distp[-c(3,6,7,9,10,11,22:25),] 
+its2Dist = its2Distp[c(14:ncol(its2Prof))] %>% decostand("normalize") %>% vegdist(method = "bray")
+its2PCoA = cmdscale(its2Dist, eig = TRUE, x.ret = TRUE)
+
+pclirttIBS <- read_table("../../Genotype RTT/pcliRTT/PCLINoClones.ibsMat", col_names = F)[,-18] %>% as.matrix() %>% as.dist(diag = TRUE)
+
+pclirttPCoA = cmdscale(pclirttIBS, eig = TRUE, x.ret = TRUE)
+
+set.seed(981) 
+its2IBSProcrustesp = protest(X = pclirttPCoA, Y = its2PCoA, permutations = 9999)
+its2IBSProcrustesp
+
+plot(its2IBSProcrustesp)
+plot(its2IBSProcrustesp, kind = 2)
+
+MCAVadmixpops = read.csv("../../Genotype RTT/mcavRTT/mcav2columntable.csv")
+
+#NgsAdmix
+
+logs <- as.data.frame(read.table("../../Genotype RTT/mcavRTT/MCAVNgsAdmixLogfile"))
+
+#output is organized with 10, 11 preceding 1, 2, 3 etc.
+logs$K <- c(rep("10", 50), rep("11", 50), rep("1", 50), rep("2", 50), rep("3", 50),
+rep("4", 50), rep("5", 50), rep("6", 50),
+    rep("7", 50), rep("8", 50), rep("9", 50))
+write.table(logs[, c(2, 1)], "MCAVNgsAdmixLogfile_formatted", row.names = F,
+        col.names = F, quote = F)
+
+#check formatted log file in koko (its saved in its2rtt on One Drive)
+
+
+PCLIclumpp4 <- read_table("../../Genotype RTT/pcliRTT/ClumppK4output.log")
+PCLIclumpp4$V1 = admixpops$sampleID
+
+rttAdmix = admixpops[-131,] %>% left_join(clumpp4[,c(1, 6:9)], by = c("sample" = "V1"))
+
+admixDist = sintAdmix[c(5:ncol(rttAdmix))] %>% vegdist(method = "euclidean")
+
+admixPCoA = cmdscale(admixDist, eig = TRUE, x.ret = TRUE)
+
+set.seed(981) 
+its2AdmixProcrustes = protest(X = admixPCoA, Y = its2PCoA, permutations = 9999)
+
+its2AdmixProcrustes
+
+plot(its2AdmixProcrustes)
+```
+
+OFAV
+```{r}
+
+library(dplyr)
+its2DistA = its2Prof %>% arrange(sampleID)
+its2Distp <- its2DistA %>% filter(sample.number > 50) 
+#remove tech reps and clones
+its2Distp <- its2Distp[-c(3,6,7,9,10,11,22:25),] 
+its2Dist = its2Distp[c(14:ncol(its2Prof))] %>% decostand("normalize") %>% vegdist(method = "bray")
+its2PCoA = cmdscale(its2Dist, eig = TRUE, x.ret = TRUE)
+
+pclirttIBS <- read_table("../../Genotype RTT/pcliRTT/PCLINoClones.ibsMat", col_names = F)[,-18] %>% as.matrix() %>% as.dist(diag = TRUE)
+
+pclirttPCoA = cmdscale(pclirttIBS, eig = TRUE, x.ret = TRUE)
+
+set.seed(981) 
+its2IBSProcrustesp = protest(X = pclirttPCoA, Y = its2PCoA, permutations = 9999)
+its2IBSProcrustesp
+
+plot(its2IBSProcrustesp)
+plot(its2IBSProcrustesp, kind = 2)
+
+OFAVadmixpops = read.csv("../../Genotype RTT/ofavRTT/ofav2columntable.csv")
+
+#NgsAdmix
+
+logs <- as.data.frame(read.table("../../Genotype RTT/ofavRTT/OFAVNgsAdmixLogfile"))
+
+#output is organized with 10, 11 preceding 1, 2, 3 etc.
+logs$K <- c(rep("10", 50), rep("11", 50), rep("1", 50), rep("2", 50), rep("3", 50),
+rep("4", 50), rep("5", 50), rep("6", 50),
+    rep("7", 50), rep("8", 50), rep("9", 50))
+write.table(logs[, c(2, 1)], "OFAVNgsAdmixLogfile_formatted", row.names = F,
+        col.names = F, quote = F)
+
+#check formatted log file in koko (its saved in its2rtt on One Drive)
+
+
+PCLIclumpp4 <- read_table("../../Genotype RTT/pcliRTT/ClumppK4output.log")
+PCLIclumpp4$V1 = admixpops$sampleID
+
+rttAdmix = admixpops[-131,] %>% left_join(clumpp4[,c(1, 6:9)], by = c("sample" = "V1"))
+
+admixDist = sintAdmix[c(5:ncol(rttAdmix))] %>% vegdist(method = "euclidean")
+
+admixPCoA = cmdscale(admixDist, eig = TRUE, x.ret = TRUE)
+
+set.seed(981) 
+its2AdmixProcrustes = protest(X = admixPCoA, Y = its2PCoA, permutations = 9999)
+
+its2AdmixProcrustes
+
+plot(its2AdmixProcrustes)
+```
+
+
+PCLI
+```{r}
+library(dplyr)
+its2DistA = its2Prof %>% arrange(sampleID)
+its2Distp <- its2DistA %>% filter(sample.number > 50) 
+#remove tech reps and clones
+its2Distp <- its2Distp[-c(3,6,7,9,10,11,22:25),] 
+its2Dist = its2Distp[c(14:ncol(its2Prof))] %>% decostand("normalize") %>% vegdist(method = "bray")
+its2PCoA = cmdscale(its2Dist, eig = TRUE, x.ret = TRUE)
+
+pclirttIBS <- read_table("../../Genotype RTT/pcliRTT/PCLINoClones.ibsMat", col_names = F)[,-18] %>% as.matrix() %>% as.dist(diag = TRUE)
+
+pclirttPCoA = cmdscale(pclirttIBS, eig = TRUE, x.ret = TRUE)
+
+set.seed(981) 
+its2IBSProcrustesp = protest(X = pclirttPCoA, Y = its2PCoA, permutations = 9999)
+its2IBSProcrustesp
+
+plot(its2IBSProcrustesp)
+plot(its2IBSProcrustesp, kind = 2)
+
+admixpops = read.csv("../../Genotype RTT/pcliRTT/pcli2columntable.csv")
+
+#NgsAdmix
+
+logs <- as.data.frame(read.table("../../Genotype RTT/pcliRTT/PCLINgsAdmixLogfile"))
+
+#output is organized with 10, 11 preceding 1, 2, 3 etc.
+logs$K <- c(rep("10", 50), rep("11", 50), rep("1", 50), rep("2", 50), rep("3", 50),
+rep("4", 50), rep("5", 50), rep("6", 50),
+    rep("7", 50), rep("8", 50), rep("9", 50))
+write.table(logs[, c(2, 1)], "PCLINgsAdmixLogfile_formatted", row.names = F,
+        col.names = F, quote = F)
+
+#check formatted log file in koko (its saved in its2rtt on One Drive)
+#cat fkSintNgsAdmixLogfile_formatted | wc -l
+#make copies of .qopt files to run structure selector on (.Q files)
+#for file in fkSint*.qopt; do
+#filename=$(basename -- "$file" .qopt);
+#cp "$file" "$filename".Q;
+#done
+
+#mkdir fkSintQ
+#mv fkSint*Q fkSintQ
+
+#zip -r fkSintQ.zip fkSintQ
+#scp .zip and formatted logfile to local machine and upload to CLUMPAK (formatted log file) (http://clumpak.tau.ac.il/bestK.html) and structure selector (.Q file) (https://lmme.ac.cn/StructureSelector/index.html) 
+#structure selector will want a PopMap aka a text file with the first column being a sample list and the second column being population assignment
+
+#scp sintNoClones* to local machine for further analyses with R
+
+PCLIclumpp4 <- read_table("../../Genotype RTT/pcliRTT/ClumppK4output.log") #put pcangsd files here instead
+PCLIclumpp4$V1 = admixpops$sampleID
+
+rttAdmix = admixpops[-131,] %>% left_join(clumpp4[,c(1, 6:9)], by = c("sample" = "V1"))
+
+admixDist = sintAdmix[c(5:ncol(rttAdmix))] %>% vegdist(method = "euclidean")
+
+admixPCoA = cmdscale(admixDist, eig = TRUE, x.ret = TRUE)
+
+set.seed(981) 
+its2AdmixProcrustes = protest(X = admixPCoA, Y = its2PCoA, permutations = 9999)
+
+its2AdmixProcrustes
+
+plot(its2AdmixProcrustes)
+```
+Checking dispersion with PERMDISP
+Using vegan::betadisper() to look at multivariate homogeneity of dispersion (PERMDISP) between species and sources. This is using Bray-Curtis dissimilarity.
+```{r}
+alpha = with(its2Prof, tapply(specnumber(its2Prof[, c(14:ncol(its2Prof))]), source, mean))
+alpha
+
+gamma = with(its2Prof, specnumber(its2Prof[, c(14:ncol(its2Prof))], source))
+gamma
+
+gamma/alpha
+
+set.seed(694) 
+its2dispS = betadisper(vegdist(decostand(its2Prof[, c(14:ncol(its2Prof))], "normalize")), its2Prof$source)
+
+set.seed(694) 
+permutest(its2dispS, permutations = 9999)
+
+alpha = with(its2Prof, tapply(specnumber(its2Prof[, c(14:ncol(its2Prof))]), species, mean))
+alpha
+
+gamma = with(its2Prof, specnumber(its2Prof[, c(14:ncol(its2Prof))], species))
+gamma
+
+gamma/alpha
+
+its2dispD = betadisper(vegdist(decostand(its2Prof[, c(14:ncol(its2Prof))], "normalize")), its2Prof$species)
+
+its2dispD
+
+set.seed(694)
+its2dispDPerm = permutest(its2dispD, permutations = 9999)
+
+its2dispDPerm
+```
+Running PERMANOVA in R
+Now let’s see how different communities are from each other with PERMANOVA. We will utilize the vegan::adonis() function. We will use Bray-Curtis similarity for our distance matrix and run a total 0f 9,999 permutations, and test the effects of disease status.
+
+Disease Status and Algal Symbionts
+```{r}
+set.seed(694)
+its2Adonis = adonis2(decostand(its2Prof[, c(14:ncol(its2Prof))], "normalize") ~ disease.status, data = its2Prof, permutations = 9999, method = "bray")
+
+its2Adonis 
+
+set.seed(694)
+its2PWAdonis = pairwise.adonis(decostand(its2Prof[,c(14:ncol(its2Prof))], "normalize"), factors = its2Prof$disease.status, sim.method = "bray", p.adjust.m = "fdr", perm = 9999)
+
+its2PWAdonis
+
+```
+Source and Algal Symbionts
+```{r}
+set.seed(694)
+its2AdonisSource = adonis2(decostand(its2Prof[, c(14:ncol(its2Prof))], "normalize") ~ source, data = its2Prof, permutations = 9999, method = "bray")
+
+its2AdonisSource
+
+set.seed(694)
+its2PWAdonisSource = pairwise.adonis(decostand(its2Prof[,c(14:ncol(its2Prof))], "normalize"), factors = its2Prof$source, sim.method = "bray", p.adjust.m = "fdr", perm = 9999)
+
+its2PWAdonisSource
+
+```
+
+Colonies...
+Disease status across regions
+
+```{r}
+colony_metadata <- read_csv("../../Genotype RTT/csv/Disease_Status_Metadata_1_75.csv")
+
+colony_metadata$Disease = factor(colony_metadata$Disease, levels = c("0", "1"))
+colony_metadata$Region = factor(colony_metadata$Region, levels = c("1", "2", "3", "4", "5", "6"))
+colony_metadata$Site = factor(colony_metadata$Site, levels = c("1", "2", "3", "4"))
+colony_metadata$Disease = as.numeric(colony_metadata$Disease)
+colony_metadata$Region = as.numeric(colony_metadata$Region)
+colony_metadata$Site = as.numeric(colony_metadata$Site)
+
+set.seed(694)
+colonyAdonis = adonis2(colony_metadata$Disease ~ Region, data = colony_metadata, permutations = 9999, method = "bray")
+
+colonyAdonis 
+
+colony_metadata$Region = as.character(colony_metadata$Region)
+set.seed(694)
+its2PWAdonis = pairwise.adonis2(colony_metadata$Disease, factors = colony_metadata$Region, sim.method = "bray", p.adjust.m = "fdr", perm = 9999)
+
+its2PWAdonis
+
+```
+Disease status across region and site (NOT SIGNIFICANT)
+
+```{r}
+set.seed(694)
+colonyAdonis = adonis2(colony_metadata$Disease ~ Region:Site, data = colony_metadata, permutations = 9999, method = "bray")
+
+colonyAdonis 
+
+set.seed(694)
+its2PWAdonis = pairwise.adonis(Disease, factors = Region:Site, sim.method = "bray", p.adjust.m = "fdr", perm = 9999)
+
+its2PWAdonis
+```
+#### PCANGSD ####
+
+MCAV
+```{r}
+MCAVcov = read.table("../../Genotype RTT/mcavRTT/MCAVPcangsd.cov") %>% as.matrix()
+
+MCAVpcadmix = read.table("../../Genotype RTT/mcavRTT/MCAVPcangsd.admix.2.Q")
+MCAVpcadmix %>% summarise(sum(V1),sum(V2))
+
+MCAVpcadmix = MCAVpcadmix %>% rename("cluster2" = "V1", "cluster1" = "V2") %>% select(order(colnames(.)))
+MCAVpcaEig = eigen(cov)
+mcavPcaVar = pcaEig$values/sum(MCAVpcaEig$values)*100
+head(mcavPcaVar)
+
+MCAVpcangsd = read.csv("../../Genotype RTT/mcavRTT/mcav2columntable.csv")
+
+MCAVpcangsd$sourcedisease = as.factor(paste(MCAVadmixpops$source, MCAVadmixpops$disease.status, sep = " "))
+
+MCAVpcangsd$sourcedisease = factor(MCAVpcangsd$sourcedisease, levels(MCAVpcangsd$sourcedisease)[c(1,2,3,4,5,6,7,8,9,10)])
+
+MCAVpcangsd$source = factor(MCAVpcangsd$source)
+#MCAVpcangsd$source = factor(MCAVpcangsd$source, levels(MCAVpcangsd$source)[c( "FWC","MOTE","UM")])
+
+MCAVpcangsd$disease.status = factor(MCAVpcangsd$disease.status)
+#MCAVpcangsd$disease.status = factor(MCAVpcangsd$disease.status, levels(MCAVpcangsd$disease.status)[c("0","1")])
+
+MCAVpcangsd$PC1 = MCAVpcaEig$vectors[,1]
+MCAVpcangsd$PC2 = MCAVpcaEig$vectors[,2]
+
+MCAVpcangsdClust = MCAVpcadmix %>% mutate(cluster = ifelse(cluster1 < 0.75 & cluster2 < 0.75, "NA", ifelse(cluster1 >=0.75, 1, ifelse(cluster2 >= 0.75, 2, 0))))
+
+MCAVpcangsd = MCAVpcangsd %>% mutate(MCAVpcangsdClust)
+
+MCAVpcangsd$cluster = as.factor(MCAVpcangsd$cluster)
+levels(MCAVpcangsd$cluster) = c("Red", "Yellow", "Admixed")
+
+flPal = paletteer_d("vapoRwave::jazzCup")[c(2:5)]
+kColPal2 = paletteer_d("ggthemes::Jewel_Bright")[c(1:4,9)]
+
+MCAVpcaPlot12SA = ggplot() +
+geom_hline(yintercept = 0, color = "gray90", size = 0.5) +
+geom_vline(xintercept = 0, color = "gray90", size = 0.5) +
+geom_point(data = MCAVpcangsd, aes(x = PC1, y = PC2, fill = cluster, shape = source), color = "black", size = 1.5, alpha = 0.7, show.legend = TRUE) +
+scale_shape_manual(values = c(21,22,23,24,25), name = "Source:") +
+scale_fill_manual(values = c("red","yellow","blue"), name = "Disease Status:") +
+labs(x = paste0("PC 1 (", format(round(pcliPcaVar[1], 1), nsmall = 1)," %)"), y = paste0("PC 2 (", format(round(pcliPcaVar[2], 1), nsmall = 1), " %)")) +
+guides(shape = guide_legend(override.aes = list(size = 2, stroke = 0.5, alpha = NA), order = 2, ncol = 1), fill = guide_legend(override.aes = list(shape = 22, size = 2, fill = c("red","yellow","blue"), alpha = NA), order = 1, ncol = 2))+
+ theme_bw()
+MCAVpcaPlot12SA
+
+MCAVpcaPlot12S = MCAVpcaPlot12SA +
+ theme(axis.title.x = element_text(color = "black", size = 10),
+ axis.text.x = element_blank(),
+ axis.ticks.x = element_blank(),
+ axis.line.x = element_blank(),
+ axis.title.y = element_text(color = "black", size = 10),
+ axis.text.y = element_blank(),
+ axis.ticks.y = element_blank(),
+ axis.line.y = element_blank(),
+ legend.position = "right",
+ legend.title = element_text(size = 8),
+ legend.text = element_text(size = 8),
+ panel.border = element_rect(color = "black", linewidth = 1),
+ panel.grid.major = element_blank(),
+ panel.grid.minor = element_blank())
+
+MCAVpcaPlot12S
+```
+
+OFAV
+```{r}
+OFAVcov = read.table("../../Genotype RTT/ofavRTT/OFAVPcangsd.cov") %>% as.matrix()
+
+OFAVpcadmix = read.table("../../Genotype RTT/ofavRTT/OFAVPcangsd.admix.2.Q")
+OFAVpcadmix %>% summarise(sum(V1),sum(V2))
+
+OFAVpcadmix = OFAVpcadmix %>% rename("cluster2" = "V1", "cluster1" = "V2") %>% select(order(colnames(.)))
+OFAVpcaEig = eigen(cov)
+ofavPcaVar = OFAVpcaEig$values/sum(OFAVpcaEig$values)*100
+head(ofavPcaVar)
+
+OFAVpcangsd = read.csv("../../Genotype RTT/ofavRTT/ofav2columntable.csv")
+
+OFAVpcangsd$sourcedisease = as.factor(paste(OFAVadmixpops$source, OFAVadmixpops$disease.status, sep = " "))
+
+OFAVpcangsd$sourcedisease = factor(OFAVpcangsd$sourcedisease, levels(OFAVpcangsd$sourcedisease)[c(1,2,3,4,5,6,7,8,9,10)])
+
+OFAVpcangsd$source = factor(OFAVpcangsd$source)
+#OFAVpcangsd$source = factor(OFAVpcangsd$source, levels(OFAVpcangsd$source)[c( "FWC","MOTE","UM")])
+
+OFAVpcangsd$disease.status = factor(OFAVpcangsd$disease.status)
+#OFAVpcangsd$disease.status = factor(OFAVpcangsd$disease.status, levels(OFAVpcangsd$disease.status)[c("0","1")])
+
+OFAVpcangsd$PC1 = OFAVpcaEig$vectors[,1]
+OFAVpcangsd$PC2 = OFAVpcaEig$vectors[,2]
+
+OFAVpcangsdClust = OFAVpcadmix %>% mutate(cluster = ifelse(cluster1 < 0.75 & cluster2 < 0.75, "NA", ifelse(cluster1 >=0.75, 1, ifelse(cluster2 >= 0.75, 2, 0))))
+
+OFAVpcangsd = OFAVpcangsd %>% mutate(OFAVpcangsdClust)
+
+OFAVpcangsd$cluster = as.factor(OFAVpcangsd$cluster)
+levels(OFAVpcangsd$cluster) = c("Red", "Yellow", "Admixed")
+
+flPal = paletteer_d("vapoRwave::jazzCup")[c(2:5)]
+kColPal2 = paletteer_d("ggthemes::Jewel_Bright")[c(1:4,9)]
+
+OFAVpcaPlot12SA = ggplot() +
+geom_hline(yintercept = 0, color = "gray90", size = 0.5) +
+geom_vline(xintercept = 0, color = "gray90", size = 0.5) +
+geom_point(data = OFAVpcangsd, aes(x = PC1, y = PC2, fill = cluster, shape = source), color = "black", size = 1.5, alpha = 0.7, show.legend = TRUE) +
+scale_shape_manual(values = c(21,22,23,24,25), name = "Source:") +
+scale_fill_manual(values = c("red","yellow","blue"), name = "Disease Status:") +
+labs(x = paste0("PC 1 (", format(round(ofavPcaVar[1], 1), nsmall = 1)," %)"), y = paste0("PC 2 (", format(round(ofavPcaVar[2], 1), nsmall = 1), " %)")) +
+guides(shape = guide_legend(override.aes = list(size = 2, stroke = 0.5, alpha = NA), order = 2, ncol = 1), fill = guide_legend(override.aes = list(shape = 22, size = 2, fill = c("red","yellow","blue"), alpha = NA), order = 1, ncol = 2))+
+ theme_bw()
+OFAVpcaPlot12SA
+
+OFAVpcaPlot12S = OFAVpcaPlot12SA +
+ theme(axis.title.x = element_text(color = "black", size = 10),
+ axis.text.x = element_blank(),
+ axis.ticks.x = element_blank(),
+ axis.line.x = element_blank(),
+ axis.title.y = element_text(color = "black", size = 10),
+ axis.text.y = element_blank(),
+ axis.ticks.y = element_blank(),
+ axis.line.y = element_blank(),
+ legend.position = "right",
+ legend.title = element_text(size = 8),
+ legend.text = element_text(size = 8),
+ panel.border = element_rect(color = "black", linewidth = 1),
+ panel.grid.major = element_blank(),
+ panel.grid.minor = element_blank())
+
+OFAVpcaPlot12S
+```
+
+PCLI
+```{r}
+cov = read.table("../../Genotype RTT/pcliRTT/PCLIPcangsd.cov") %>% as.matrix()
+
+pcadmix = read.table("../../Genotype RTT/pcliRTT/PCLIPcangsd.admix.2.Q")
+pcadmix %>% summarise(sum(V1),sum(V2))
+
+pcadmix = pcadmix %>% rename("cluster2" = "V1", "cluster1" = "V2") %>% select(order(colnames(.)))
+pcaEig = eigen(cov)
+pcliPcaVar = pcaEig$values/sum(pcaEig$values)*100
+head(pcliPcaVar)
+
+pcangsd = read.csv("../../Genotype RTT/pcliRTT/pcli2columntable.csv")
+
+pcangsd$sourcedisease = as.factor(paste(admixpops$source, admixpops$disease.status, sep = " "))
+
+pcangsd$sourcedisease = factor(pcangsd$sourcedisease, levels(pcangsd$sourcedisease)[c(1,2,3,4,5,6,7,8,9,10)])
+
+pcangsd$source = factor(pcangsd$source)
+pcangsd$source = factor(pcangsd$source, levels(pcangsd$source)[c( "CRF","FWC","MOTE","RR","UM")])
+
+pcangsd$disease.status = factor(pcangsd$disease.status)
+pcangsd$disease.status = factor(pcangsd$disease.status, levels(pcangsd$disease.status)[c("0","1")])
+
+pcangsd$PC1 = pcaEig$vectors[,1]
+pcangsd$PC2 = pcaEig$vectors[,2]
+
+pcangsdClust = pcadmix %>% mutate(cluster = ifelse(cluster1 < 0.75 & cluster2 < 0.75, "NA", ifelse(cluster1 >=0.75, 1, ifelse(cluster2 >= 0.75, 2, 0))))
+
+pcangsd = pcangsd %>% mutate(pcangsdClust)
+
+pcangsd$cluster = as.factor(pcangsd$cluster)
+levels(pcangsd$cluster) = c("Red", "Yellow", "Admixed")
+
+flPal = paletteer_d("vapoRwave::jazzCup")[c(2:5)]
+kColPal2 = paletteer_d("ggthemes::Jewel_Bright")[c(1:4,9)]
+
+pcaPlot12SA = ggplot() +
+geom_hline(yintercept = 0, color = "gray90", size = 0.5) +
+geom_vline(xintercept = 0, color = "gray90", size = 0.5) +
+geom_point(data = pcangsd, aes(x = PC1, y = PC2, fill = cluster, shape = source), color = "black", size = 1.5, alpha = 0.7, show.legend = TRUE) +
+scale_shape_manual(values = c(21,22,23,24,25), name = "Source:") +
+scale_fill_manual(values = c("red","yellow","blue"), name = "Disease Status:") +
+labs(x = paste0("PC 1 (", format(round(pcliPcaVar[1], 1), nsmall = 1)," %)"), y = paste0("PC 2 (", format(round(pcliPcaVar[2], 1), nsmall = 1), " %)")) +
+guides(shape = guide_legend(override.aes = list(size = 2, stroke = 0.5, alpha = NA), order = 2, ncol = 1), fill = guide_legend(override.aes = list(shape = 22, size = 2, fill = c("red","yellow","blue"), alpha = NA), order = 1, ncol = 2))+
+ theme_bw()
+pcaPlot12SA
+
+pcaPlot12S = pcaPlot12SA +
+ theme(axis.title.x = element_text(color = "black", size = 10),
+ axis.text.x = element_blank(),
+ axis.ticks.x = element_blank(),
+ axis.line.x = element_blank(),
+ axis.title.y = element_text(color = "black", size = 10),
+ axis.text.y = element_blank(),
+ axis.ticks.y = element_blank(),
+ axis.line.y = element_blank(),
+ legend.position = "right",
+ legend.title = element_text(size = 8),
+ legend.text = element_text(size = 8),
+ panel.border = element_rect(color = "black", linewidth = 1),
+ panel.grid.major = element_blank(),
+ panel.grid.minor = element_blank())
+
+pcaPlot12S
+```
+
