@@ -1,0 +1,879 @@
+---
+title: "2bRAD Genotyping"
+author: "Sydney Bell"
+date: "6/7/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##2bRAD RTT
+
+```{r cars}
+#loading R packages
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load_gh("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis", "ropensci/rnaturalearthhires")
+pacman::p_load("cowplot", "ggrepel", "ggspatial", "paletteer", "patchwork", "rgdal", "rnaturalearth", "sf", "tidyverse", "reshape2", "MCMC.OTU", "pairwiseAdonis", "RColorBrewer", "Redmonder",  "lubridate", "officer", "adegenet", "dendextend", "gdata", "ggdendro", "hierfstat",  "poppr", "reshape2", "StAMPP", "vcfR", "vegan", "boa", "magick", "rgeos")
+
+#"Imap", "kableExtra","flextable",
+options("scipen" = 10)
+```
+#MCAV IBS w clones
+
+Use ibs matrix to identify clones with hierachial clustering in ```R```. ```scp``` to local machine and run chunk below in ```R```
+```{r, Dendrogram With Clones, fig.dim = c(13, 4.75)}
+mcavCloneBams = read.csv("../mcavRTT/MCAVrttMetaDataBams.csv")
+
+#mcavCloneBams=filter(cloneBams, Species == "MCAV")%>%filter(cloneBams, SAMPLE != "12")
+# list ofsample files
+
+mcavCloneMa = as.matrix(read.table("../mcavRTT/MCAVClones.ibsMat")) # reads in IBS matrix produced by ANGSD 
+
+dimnames(mcavCloneMa) = list(mcavCloneBams[,1],mcavCloneBams[,1])
+mcavClonesHc = hclust(as.dist(mcavCloneMa),"ave")
+
+mcavCloneDend = mcavCloneMa %>% as.dist() %>% hclust(.,"ave") %>% as.dendrogram()
+mcavCloneDData = mcavCloneDend %>% dendro_data()
+
+# Making the branches hang shorter so we can easily see clonal groups
+mcavCloneDData$segments$yend2 = mcavCloneDData$segments$yend
+for(i in 1:nrow(mcavCloneDData$segments)) {
+  if (mcavCloneDData$segments$yend2[i] == 0) {
+    mcavCloneDData$segments$yend2[i] = (mcavCloneDData$segments$y[i] - 0.01)}}
+mcavCloneDendPoints = mcavCloneDData$labels
+#mcavCloneDendPoints$Disease = mcavCloneDisease[order.dendrogram(mcavCloneDend)]
+#mcavCloneDendPoints$depth=mcavCloneDepth[order.dendrogram(mcavCloneDend)]
+mcavCloneSource = mcavCloneBams$Source
+#mcavCloneDisease = mcavCloneBams$Disease
+mcavCloneDendPoints$Source=mcavCloneSource[order.dendrogram(mcavCloneDend)]
+rownames(mcavCloneDendPoints) = mcavCloneDendPoints$label
+# Making points at the leaves to place symbols for populations
+point = as.vector(NA)
+for(i in 1:nrow(mcavCloneDData$segments)) {
+  if (mcavCloneDData$segments$yend[i] == 0) {
+    point[i] = mcavCloneDData$segments$y[i] - 0.01
+  } else {
+    point[i] = NA}}
+mcavCloneDendPoints$y = point[!is.na(point)]
+#techReps = c("SFK066.1", "SFK066.2", "SFK066.3", "SFK162.1", "SFK162.2", "SFK162.3", "SFK205.1", "SFK205.2", "SFK205.3")
+#cloneDendPoints$depth = factor(cloneDendPoints$depth)
+#cloneDendPoints$depth = factor(cloneDendPoints$depth, levels(cloneDendPoints$depth)[c(2,1)])
+mcavCloneDendPoints$Source = factor(mcavCloneDendPoints$Source)
+#cloneDendPoints$Source = factor(mcavCloneDendPoints$Source,levels(mcavCloneDendPoints$Source)[c(4, 1, 3, 2)])
+library(paletteer)
+library(ggplot2)
+flPal1 = paletteer_d("vapoRwave::jazzCup")[c(2, 3, 1, 5)]
+mcavCloneDendA = ggplot() +
+  geom_segment(data = segment(mcavCloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
+  geom_point(data = mcavCloneDendPoints, aes(x = x, y = y, fill = Source), size = 4, shape=21) +
+  #scale_fill_brewer(palette = "Dark2", name = "Population") +
+  scale_fill_manual(values = flPal1, name= "Source:") +
+  #scale_shape_manual(values = c(24, 25), name = "Depth Zone:") +
+  geom_hline(yintercept = 0.145, color = "red", lty = 5, size = 0.75) + # creating a dashed line to indicate a clonal distance threshold
+  geom_text(data = (mcavCloneDendPoints), aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
+  #geom_text(data = subset(cloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .015), label = label), angle = 90) +
+  labs(y = "Genetic distance (1 - IBS)") +
+  guides(fill = guide_legend(override.aes = list(shape = 22, size = 10)), shape = guide_legend(override.aes = list(size = 8), order = 1)) +
+  theme_classic()
+mcavCloneDend = mcavCloneDendA + theme(
+  axis.title.x = element_blank(),
+  axis.text.x = element_blank(),
+  axis.line.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.title.y = element_text(size = 24, color = "black", angle = 90),
+  axis.text.y = element_text(size = 20, color = "black"),
+  axis.line.y = element_line(),
+  axis.ticks.y = element_line(),
+  panel.grid = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  legend.key = element_blank(),
+  legend.title = element_text(size = 24),
+  legend.text = element_text(size = 20),
+  legend.position = "bottom")
+
+mcavCloneDend
+```
+
+#OFAV IBS w clones
+```{r, Dendrogram With Clones, fig.dim = c(13, 4.75)}
+ofavCloneBams = read.csv("C:/Users/Sydney/Downloads/FAU/Genotype RTT/ofavMetaDataBams.csv")
+
+#ofavCloneBams=filter(cloneBams, Species == "OFAV")%>%filter(cloneBams, SAMPLE != "44")
+# list ofsample files
+
+ofavCloneMa = as.matrix(read.table("C:/Users/Sydney/Downloads/FAU/Genotype RTT/ofavClones.ibsMat")) # reads in IBS matrix produced by ANGSD 
+
+dimnames(ofavCloneMa) = list(ofavCloneBams[,1],ofavCloneBams[,1])
+ofavClonesHc = hclust(as.dist(ofavCloneMa),"ave")
+
+library(ggdendro)
+ofavCloneDend = ofavCloneMa %>% as.dist() %>% hclust(.,"ave") %>% as.dendrogram()
+ofavCloneDData = ofavCloneDend %>% dendro_data()
+
+# Making the branches hang shorter so we can easily see clonal groups
+ofavCloneDData$segments$yend2 = ofavCloneDData$segments$yend
+for(i in 1:nrow(ofavCloneDData$segments)) {
+  if (ofavCloneDData$segments$yend2[i] == 0) {
+    ofavCloneDData$segments$yend2[i] = (ofavCloneDData$segments$y[i] - 0.01)}}
+ofavCloneDendPoints = ofavCloneDData$labels
+#ofavCloneDendPoints$pop = ofavClonePops[order.dendrogram(ofavCloneDend)]
+#ofavCloneDendPoints$depth=ofavCloneDepth[order.dendrogram(ofavCloneDend)]
+ofavCloneSource = ofavCloneBams$Source
+ofavCloneDendPoints$Source=ofavCloneSource[order.dendrogram(ofavCloneDend)]
+rownames(ofavCloneDendPoints) = ofavCloneDendPoints$label
+# Making points at the leaves to place symbols for populations
+point = as.vector(NA)
+for(i in 1:nrow(ofavCloneDData$segments)) {
+  if (ofavCloneDData$segments$yend[i] == 0) {
+    point[i] = ofavCloneDData$segments$y[i] - 0.01
+  } else {
+    point[i] = NA}}
+ofavCloneDendPoints$y = point[!is.na(point)]
+#techReps = c("SFK066.1", "SFK066.2", "SFK066.3", "SFK162.1", "SFK162.2", "SFK162.3", "SFK205.1", "SFK205.2", "SFK205.3")
+#cloneDendPoints$depth = factor(cloneDendPoints$depth)
+#cloneDendPoints$depth = factor(cloneDendPoints$depth, levels(cloneDendPoints$depth)[c(2,1)])
+ofavCloneDendPoints$Source = factor(ofavCloneDendPoints$Source)
+#cloneDendPoints$Source = factor(ofavCloneDendPoints$Source,levels(ofavCloneDendPoints$Source)[c(4, 1, 3, 2)])
+flPal = paletteer_d("vapoRwave::jazzCup")[c(1:5)]
+ofavCloneDendA = ggplot() +
+  geom_segment(data = segment(ofavCloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
+  geom_point(data = ofavCloneDendPoints, aes(x = x, y = y, fill = Source), size = 4, shape=21) +
+  #scale_fill_brewer(palette = "Dark2", name = "Population") +
+  scale_fill_manual(values = flPal, name= "Source:") +
+  #scale_shape_manual(values = c(24, 25), name = "Depth Zone:") +
+  geom_hline(yintercept = 0.14, color = "red", lty = 5, size = 0.75) + # creating a dashed line to indicate a clonal distance threshold
+  geom_text(data = (ofavCloneDendPoints), aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
+  #geom_text(data = subset(cloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .015), label = label), angle = 90) +
+  labs(y = "Genetic distance (1 - IBS)") +
+  guides(fill = guide_legend(override.aes = list(shape = 22, size = 10)), shape = guide_legend(override.aes = list(size = 8), order = 1)) +
+  theme_classic()
+ofavCloneDend = ofavCloneDendA + theme(
+  axis.title.x = element_blank(),
+  axis.text.x = element_blank(),
+  axis.line.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.title.y = element_text(size = 24, color = "black", angle = 90),
+  axis.text.y = element_text(size = 20, color = "black"),
+  axis.line.y = element_line(),
+  axis.ticks.y = element_line(),
+  panel.grid = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  legend.key = element_blank(),
+  legend.title = element_text(size = 24),
+  legend.text = element_text(size = 20),
+  legend.position = "bottom")
+
+ofavCloneDend
+```
+
+#PCLI IBS w clones
+```{r}
+pcliCloneBams = read.csv("C:/Users/Sydney/Downloads/FAU/Genotype RTT/pcliMetaDataBams.csv")
+
+#pcliCloneBams=filter(cloneBams, Species == "pcli")%>%filter(cloneBams, SAMPLE != "44")
+# list ofsample files
+
+pcliCloneMa = as.matrix(read.table("C:/Users/Sydney/Downloads/FAU/Genotype RTT/pcliClones.ibsMat")) # reads in IBS matrix produced by ANGSD 
+
+dimnames(pcliCloneMa) = list(pcliCloneBams[,1],pcliCloneBams[,1])
+pcliClonesHc = hclust(as.dist(pcliCloneMa),"ave")
+
+library(dplyr)
+library(ggdendro)
+pcliCloneDend = pcliCloneMa %>% as.dist() %>% hclust(.,"ave") %>% as.dendrogram()
+pcliCloneDData = pcliCloneDend %>% dendro_data()
+
+# Making the branches hang shorter so we can easily see clonal groups
+pcliCloneDData$segments$yend2 = pcliCloneDData$segments$yend
+for(i in 1:nrow(pcliCloneDData$segments)) {
+  if (pcliCloneDData$segments$yend2[i] == 0) {
+    pcliCloneDData$segments$yend2[i] = (pcliCloneDData$segments$y[i] - 0.01)}}
+pcliCloneDendPoints = pcliCloneDData$labels
+#pcliCloneDendPoints$pop = pcliClonePops[order.dendrogram(pcliCloneDend)]
+#pcliCloneDendPoints$depth=pcliCloneDepth[order.dendrogram(pcliCloneDend)]
+pcliCloneSource = pcliCloneBams$Source
+pcliCloneDendPoints$Source=pcliCloneSource[order.dendrogram(pcliCloneDend)]
+rownames(pcliCloneDendPoints) = pcliCloneDendPoints$label
+# Making points at the leaves to place symbols for populations
+point = as.vector(NA)
+for(i in 1:nrow(pcliCloneDData$segments)) {
+  if (pcliCloneDData$segments$yend[i] == 0) {
+    point[i] = pcliCloneDData$segments$y[i] - 0.01
+  } else {
+    point[i] = NA}}
+pcliCloneDendPoints$y = point[!is.na(point)]
+techReps = c("72.1", "72.2", "72.3")
+#cloneDendPoints$depth = factor(cloneDendPoints$depth)
+#cloneDendPoints$depth = factor(cloneDendPoints$depth, levels(cloneDendPoints$depth)[c(2,1)])
+pcliCloneDendPoints$Source = factor(pcliCloneDendPoints$Source)
+#cloneDendPoints$Source = factor(pcliCloneDendPoints$Source,levels(pcliCloneDendPoints$Source)[c(4, 1, 3, 2)])
+library(paletteer)
+library(ggplot2)
+flPal = paletteer_d("vapoRwave::jazzCup")[c(2:6)]
+pcliCloneDendA = ggplot() +
+  geom_segment(data = segment(pcliCloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
+  geom_point(data = pcliCloneDendPoints, aes(x = x, y = y, fill = Source), size = 4, shape=21) +
+  #scale_fill_brewer(palette = "Dark2", name = "Population") +
+  scale_fill_manual(values = flPal, name= "Source:") +
+  #scale_shape_manual(values = c(24, 25), name = "Depth Zone:") +
+  geom_hline(yintercept = 0.13, color = "red", lty = 5, size = 0.75) + # creating a dashed line to indicate a clonal distance threshold
+  geom_text(data = (pcliCloneDendPoints), aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
+  geom_text(data = subset(pcliCloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .015), label = label), angle = 90) +
+  labs(y = "Genetic distance (1 - IBS)") +
+  guides(fill = guide_legend(override.aes = list(shape = 22, size = 10)), shape = guide_legend(override.aes = list(size = 8), order = 1)) +
+  theme_classic()
+pcliCloneDend = pcliCloneDendA + theme(
+  axis.title.x = element_blank(),
+  axis.text.x = element_blank(),
+  axis.line.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.title.y = element_text(size = 24, color = "black", angle = 90),
+  axis.text.y = element_text(size = 20, color = "black"),
+  axis.line.y = element_line(),
+  axis.ticks.y = element_line(),
+  panel.grid = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  legend.key = element_blank(),
+  legend.title = element_text(size = 24),
+  legend.text = element_text(size = 20),
+  legend.position = "bottom")
+
+pcliCloneDend
+```
+#MCAV IBS W Disease scores
+
+Use ibs matrix to identify clones with hierachial clustering in ```R```. ```scp``` to local machine and run chunk below in ```R```
+```{r, Dendrogram With Clones, fig.dim = c(13, 4.75)}
+mcavCloneBams = read.csv("../mcavRTT/MCAVrttMetaDataDisease.csv")
+
+#mcavCloneBams=filter(cloneBams, Species == "MCAV")%>%filter(cloneBams, SAMPLE != "12")
+# list ofsample files
+
+mcavCloneMa = as.matrix(read.table("../mcavRTT/mcavClones.ibsMat")) # reads in IBS matrix produced by ANGSD 
+
+dimnames(mcavCloneMa) = list(mcavCloneBams[,1],mcavCloneBams[,1])
+mcavClonesHc = hclust(as.dist(mcavCloneMa),"ave")
+
+mcavCloneDend = mcavCloneMa %>% as.dist() %>% hclust(.,"ave") %>% as.dendrogram()
+mcavCloneDData = mcavCloneDend %>% dendro_data()
+
+mcavCloneDisease = mcavCloneBams$Disease
+mcavCloneSource = mcavCloneBams$Source
+
+# Making the branches hang shorter so we can easily see clonal groups
+mcavCloneDData$segments$yend2 = mcavCloneDData$segments$yend
+for(i in 1:nrow(mcavCloneDData$segments)) {
+  if (mcavCloneDData$segments$yend2[i] == 0) {
+    mcavCloneDData$segments$yend2[i] = (mcavCloneDData$segments$y[i] - 0.01)}}
+mcavCloneDendPoints = mcavCloneDData$labels
+mcavCloneDendPoints$Disease = mcavCloneDisease[order.dendrogram(mcavCloneDend)]
+mcavCloneDendPoints$Source = mcavCloneSource[order.dendrogram(mcavCloneDend)]
+#mcavCloneDendPoints$depth=mcavCloneDepth[order.dendrogram(mcavCloneDend)]
+mcavCloneSource = mcavCloneBams$Source
+mcavCloneDisease = mcavCloneBams$Disease
+#mcavCloneDendPoints$Source=mcavCloneSource[order.dendrogram(mcavCloneDend)]
+rownames(mcavCloneDendPoints) = mcavCloneDendPoints$label
+# Making points at the leaves to place symbols for populations
+point = as.vector(NA)
+for(i in 1:nrow(mcavCloneDData$segments)) {
+  if (mcavCloneDData$segments$yend[i] == 0) {
+    point[i] = mcavCloneDData$segments$y[i] - 0.01
+  } else {
+    point[i] = NA}}
+mcavCloneDendPoints$y = point[!is.na(point)]
+#techReps = c("SFK066.1", "SFK066.2", "SFK066.3", "SFK162.1", "SFK162.2", "SFK162.3", "SFK205.1", "SFK205.2", "SFK205.3")
+#cloneDendPoints$depth = factor(cloneDendPoints$depth)
+#cloneDendPoints$depth = factor(cloneDendPoints$depth, levels(cloneDendPoints$depth)[c(2,1)])
+levels(mcavCloneDendPoints$Source)
+mcavCloneDendPoints$Source = factor(mcavCloneDendPoints$Source)
+mcavCloneDendPoints$Disease = factor(mcavCloneDendPoints$Disease)
+levels(mcavCloneDendPoints$Disease)
+mcavCloneDendPoints$Disease = factor(mcavCloneDendPoints$Disease,levels(mcavCloneDendPoints$Disease)[c(1, 2)])
+
+
+
+#######
+mcavCloneDendA = ggplot() +
+  geom_segment(data = segment(mcavCloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
+  geom_point(data = mcavCloneDendPoints, aes(x = x, y = y, fill = Disease, shape = Source), size = 4, stroke = 0.25) +
+  scale_fill_manual(values = c("red", "green"), name= "Disease:")+
+  scale_shape_manual(values = c(21, 23, 24), name = "Source:")+ geom_text(data = mcavCloneDendPoints, aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
+  geom_hline(yintercept = 0.17, color = "red", lty = 5, size = 0.75)+
+  #geom_text(data = subset(mcavCloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .010), label = label), angle = 90) +
+  labs(y = "Genetic distance (1 - IBS)") +
+  guides(fill = guide_legend(override.aes = list(shape = 22)))+
+  theme_classic()
+
+mcavCloneDend = mcavCloneDendA + theme(
+  axis.title.x = element_blank(),
+  axis.text.x = element_blank(),
+  axis.line.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.title.y = element_text(size = 12, color = "black", angle = 90),
+  axis.text.y = element_text(size = 10, color = "black"),
+  axis.line.y = element_line(),
+  axis.ticks.y = element_line(),
+  panel.grid = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  plot.background = element_blank(),
+  legend.key = element_blank(),
+  legend.title = element_text(size = 12),
+  legend.text = element_text(size = 10),
+  legend.position = "bottom")
+
+
+mcavCloneDend
+
+```
+#MCAV IBS W Disease scores
+
+Use ibs matrix to identify clones with hierachial clustering in ```R```. ```scp``` to local machine and run chunk below in ```R```
+```{r, Dendrogram With Clones, fig.dim = c(13, 4.75)}
+mcavCloneBams = read.csv("../R files/mcavRTT/MCAVrttMetaDataDisease.csv")
+
+#mcavCloneBams=filter(cloneBams, Species == "MCAV")%>%filter(cloneBams, SAMPLE != "12")
+# list ofsample files
+
+mcavCloneMa2 = as.matrix(read.table("../mcavRTT/mcavClonesdata.ibsMat")) # reads in IBS matrix produced by ANGSD 
+
+dimnames(mcavCloneMa2) = list(mcavCloneBams[,1],mcavCloneBams[,1])
+mcavClonesHc = hclust(as.dist(mcavCloneMa2),"ave")
+
+mcavCloneDend = mcavCloneMa2 %>% as.dist() %>% hclust(.,"ave") %>% as.dendrogram()
+mcavCloneDData = mcavCloneDend %>% dendro_data()
+
+mcavCloneDisease = mcavCloneBams$Disease
+mcavCloneSource = mcavCloneBams$Source
+
+# Making the branches hang shorter so we can easily see clonal groups
+mcavCloneDData$segments$yend2 = mcavCloneDData$segments$yend
+for(i in 1:nrow(mcavCloneDData$segments)) {
+  if (mcavCloneDData$segments$yend2[i] == 0) {
+    mcavCloneDData$segments$yend2[i] = (mcavCloneDData$segments$y[i] - 0.01)}}
+mcavCloneDendPoints = mcavCloneDData$labels
+mcavCloneDendPoints$Disease = mcavCloneDisease[order.dendrogram(mcavCloneDend)]
+mcavCloneDendPoints$Source = mcavCloneSource[order.dendrogram(mcavCloneDend)]
+#mcavCloneDendPoints$depth=mcavCloneDepth[order.dendrogram(mcavCloneDend)]
+mcavCloneSource = mcavCloneBams$Source
+mcavCloneDisease = mcavCloneBams$Disease
+#mcavCloneDendPoints$Source=mcavCloneSource[order.dendrogram(mcavCloneDend)]
+rownames(mcavCloneDendPoints) = mcavCloneDendPoints$label
+# Making points at the leaves to place symbols for populations
+point = as.vector(NA)
+for(i in 1:nrow(mcavCloneDData$segments)) {
+  if (mcavCloneDData$segments$yend[i] == 0) {
+    point[i] = mcavCloneDData$segments$y[i] - 0.01
+  } else {
+    point[i] = NA}}
+mcavCloneDendPoints$y = point[!is.na(point)]
+#techReps = c("SFK066.1", "SFK066.2", "SFK066.3", "SFK162.1", "SFK162.2", "SFK162.3", "SFK205.1", "SFK205.2", "SFK205.3")
+#cloneDendPoints$depth = factor(cloneDendPoints$depth)
+#cloneDendPoints$depth = factor(cloneDendPoints$depth, levels(cloneDendPoints$depth)[c(2,1)])
+levels(mcavCloneDendPoints$Source)
+mcavCloneDendPoints$Source = factor(mcavCloneDendPoints$Source)
+mcavCloneDendPoints$Disease = factor(mcavCloneDendPoints$Disease)
+levels(mcavCloneDendPoints$Disease)
+mcavCloneDendPoints$Disease = factor(mcavCloneDendPoints$Disease,levels(mcavCloneDendPoints$Disease)[c(1, 2)])
+
+
+
+#######
+mcavCloneDendA = ggplot() +
+  geom_segment(data = segment(mcavCloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
+  geom_point(data = mcavCloneDendPoints, aes(x = x, y = y, fill = Disease, shape = Source), size = 4, stroke = 0.25) +
+  scale_fill_manual(values = c("red", "green"), name= "Disease:")+
+  scale_shape_manual(values = c(21, 23, 24), name = "Source:")+ geom_text(data = mcavCloneDendPoints, aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
+  geom_hline(yintercept = 0.17, color = "red", lty = 5, size = 0.75)+
+  #geom_text(data = subset(mcavCloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .010), label = label), angle = 90) +
+  labs(y = "Genetic distance (1 - IBS)") +
+  guides(fill = guide_legend(override.aes = list(shape = 22)))+
+  theme_classic()
+
+mcavCloneDend = mcavCloneDendA + theme(
+  axis.title.x = element_blank(),
+  axis.text.x = element_blank(),
+  axis.line.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.title.y = element_text(size = 12, color = "black", angle = 90),
+  axis.text.y = element_text(size = 10, color = "black"),
+  axis.line.y = element_line(),
+  axis.ticks.y = element_line(),
+  panel.grid = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  plot.background = element_blank(),
+  legend.key = element_blank(),
+  legend.title = element_text(size = 12),
+  legend.text = element_text(size = 10),
+  legend.position = "bottom")
+
+
+mcavCloneDend
+ggsave("../figures/mcavCloneDendDisease_1year.png", plot = mcavCloneDend, height = 8, width = 14, units = "cm", dpi = 300)
+```
+
+### MCAV IBS W Disease scores ###
+
+Use ibs matrix to identify clones with hierachial clustering in ```R```. ```scp``` to local machine and run chunk below in ```R```
+```{r, Dendrogram With Clones, fig.dim = c(13, 4.75)}
+mcavCloneBams = read.csv("../R files/mcavRTT/MCAVrttMetaDataDisease.csv")
+
+#mcavCloneBams=filter(cloneBams, Species == "MCAV")%>%filter(cloneBams, SAMPLE != "12")
+# list ofsample files
+
+mcavCloneMa = as.matrix(read.table("C:/Users/Sydney/Downloads/FAU/Genotype RTT/mcavClones.ibsMat")) # reads in IBS matrix produced by ANGSD 
+
+dimnames(mcavCloneMa) = list(mcavCloneBams[,1],mcavCloneBams[,1])
+mcavClonesHc = hclust(as.dist(mcavCloneMa),"ave")
+
+mcavCloneDend = mcavCloneMa %>% as.dist() %>% hclust(.,"ave") %>% as.dendrogram()
+mcavCloneDData = mcavCloneDend %>% dendro_data()
+
+mcavCloneDisease = mcavCloneBams$Disease
+mcavCloneSource = mcavCloneBams$Source
+
+# Making the branches hang shorter so we can easily see clonal groups
+mcavCloneDData$segments$yend2 = mcavCloneDData$segments$yend
+for(i in 1:nrow(mcavCloneDData$segments)) {
+  if (mcavCloneDData$segments$yend2[i] == 0) {
+    mcavCloneDData$segments$yend2[i] = (mcavCloneDData$segments$y[i] - 0.01)}}
+mcavCloneDendPoints = mcavCloneDData$labels
+mcavCloneDendPoints$Disease = mcavCloneDisease[order.dendrogram(mcavCloneDend)]
+mcavCloneDendPoints$Source = mcavCloneSource[order.dendrogram(mcavCloneDend)]
+#mcavCloneDendPoints$depth=mcavCloneDepth[order.dendrogram(mcavCloneDend)]
+mcavCloneSource = mcavCloneBams$Source
+mcavCloneDisease = mcavCloneBams$Disease
+#mcavCloneDendPoints$Source=mcavCloneSource[order.dendrogram(mcavCloneDend)]
+rownames(mcavCloneDendPoints) = mcavCloneDendPoints$label
+# Making points at the leaves to place symbols for populations
+point = as.vector(NA)
+for(i in 1:nrow(mcavCloneDData$segments)) {
+  if (mcavCloneDData$segments$yend[i] == 0) {
+    point[i] = mcavCloneDData$segments$y[i] - 0.01
+  } else {
+    point[i] = NA}}
+mcavCloneDendPoints$y = point[!is.na(point)]
+#techReps = c("SFK066.1", "SFK066.2", "SFK066.3", "SFK162.1", "SFK162.2", "SFK162.3", "SFK205.1", "SFK205.2", "SFK205.3")
+#cloneDendPoints$depth = factor(cloneDendPoints$depth)
+#cloneDendPoints$depth = factor(cloneDendPoints$depth, levels(cloneDendPoints$depth)[c(2,1)])
+levels(mcavCloneDendPoints$Source)
+mcavCloneDendPoints$Source = factor(mcavCloneDendPoints$Source)
+mcavCloneDendPoints$Disease = factor(mcavCloneDendPoints$Disease)
+levels(mcavCloneDendPoints$Disease)
+mcavCloneDendPoints$Disease = factor(mcavCloneDendPoints$Disease,levels(mcavCloneDendPoints$Disease)[c(1, 2, 3)])
+
+
+
+#######
+mcavCloneDendA = ggplot() +
+  geom_segment(data = segment(mcavCloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
+  geom_point(data = mcavCloneDendPoints, aes(x = x, y = y, fill = Disease, shape = Source), size = 4, stroke = 0.25) +
+  scale_fill_manual(values = c("red", "gray", "green"), name= "Disease:")+
+  scale_shape_manual(values = c(21, 23, 24), name = "Source:")+ geom_text(data = mcavCloneDendPoints, aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
+  geom_hline(yintercept = 0.17, color = "red", lty = 5, size = 0.75)+
+  #geom_text(data = subset(mcavCloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .010), label = label), angle = 90) +
+  labs(y = "Genetic distance (1 - IBS)") +
+  guides(fill = guide_legend(override.aes = list(shape = 22)))+
+  theme_classic()
+
+mcavCloneDend = mcavCloneDendA + theme(
+  axis.title.x = element_blank(),
+  axis.text.x = element_blank(),
+  axis.line.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.title.y = element_text(size = 12, color = "black", angle = 90),
+  axis.text.y = element_text(size = 10, color = "black"),
+  axis.line.y = element_line(),
+  axis.ticks.y = element_line(),
+  panel.grid = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  plot.background = element_blank(),
+  legend.key = element_blank(),
+  legend.title = element_text(size = 12),
+  legend.text = element_text(size = 10),
+  legend.position = "bottom")
+
+
+mcavCloneDend
+
+```
+
+### OFAV IBS W Disease scores ###
+
+Use ibs matrix to identify clones with hierachial clustering in ```R```. ```scp``` to local machine and run chunk below in ```R```
+```{r, Dendrogram With Clones, fig.dim = c(13, 4.75)}
+ofavCloneBams = read.csv("../ofavRTT/ofavMetaDataDisease.csv")
+
+#mcavCloneBams=filter(cloneBams, Species == "MCAV")%>%filter(cloneBams, SAMPLE != "12")
+# list ofsample files
+
+ofavCloneMa = as.matrix(read.table("../ofavRTT/ofavClones.ibsMat")) # reads in IBS matrix produced by ANGSD 
+
+dimnames(ofavCloneMa) = list(ofavCloneBams[,1],ofavCloneBams[,1])
+ofavClonesHc = hclust(as.dist(ofavCloneMa),"ave")
+
+ofavCloneDend = ofavCloneMa %>% as.dist() %>% hclust(.,"ave") %>% as.dendrogram()
+ofavCloneDData = ofavCloneDend %>% dendro_data()
+
+ofavCloneDisease = ofavCloneBams$Disease
+ofavCloneSource = ofavCloneBams$Source
+
+# Making the branches hang shorter so we can easily see clonal groups
+ofavCloneDData$segments$yend2 = ofavCloneDData$segments$yend
+for(i in 1:nrow(ofavCloneDData$segments)) {
+  if (ofavCloneDData$segments$yend2[i] == 0) {
+    ofavCloneDData$segments$yend2[i] = (ofavCloneDData$segments$y[i] - 0.01)}}
+ofavCloneDendPoints = ofavCloneDData$labels
+ofavCloneDendPoints$Disease = ofavCloneDisease[order.dendrogram(ofavCloneDend)]
+ofavCloneDendPoints$Source = ofavCloneSource[order.dendrogram(ofavCloneDend)]
+#ofavCloneDendPoints$depth=ofavCloneDepth[order.dendrogram(ofavCloneDend)]
+ofavCloneSource = ofavCloneBams$Source
+ofavCloneDisease = ofavCloneBams$Disease
+#ofavCloneDendPoints$Source=ofavCloneSource[order.dendrogram(ofavCloneDend)]
+rownames(ofavCloneDendPoints) = ofavCloneDendPoints$label
+# Making points at the leaves to place symbols for populations
+point = as.vector(NA)
+for(i in 1:nrow(ofavCloneDData$segments)) {
+  if (ofavCloneDData$segments$yend[i] == 0) {
+    point[i] = ofavCloneDData$segments$y[i] - 0.01
+  } else {
+    point[i] = NA}}
+ofavCloneDendPoints$y = point[!is.na(point)]
+#techReps = c("SFK066.1", "SFK066.2", "SFK066.3", "SFK162.1", "SFK162.2", "SFK162.3", "SFK205.1", "SFK205.2", "SFK205.3")
+#cloneDendPoints$depth = factor(cloneDendPoints$depth)
+#cloneDendPoints$depth = factor(cloneDendPoints$depth, levels(cloneDendPoints$depth)[c(2,1)])
+levels(ofavCloneDendPoints$Source)
+ofavCloneDendPoints$Source = factor(ofavCloneDendPoints$Source)
+ofavCloneDendPoints$Disease = factor(ofavCloneDendPoints$Disease)
+levels(ofavCloneDendPoints$Disease)
+ofavCloneDendPoints$Disease = factor(ofavCloneDendPoints$Disease,levels(ofavCloneDendPoints$Disease)[c(1, 2, 3)])
+
+
+
+#######
+ofavCloneDendA = ggplot() +
+  geom_segment(data = segment(ofavCloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
+  geom_point(data = ofavCloneDendPoints, aes(x = x, y = y, fill = Disease, shape = Source), size = 4, stroke = 0.25) +
+  scale_fill_manual(values = c("red", "green"), name= "Disease:")+
+  scale_shape_manual(values = c(22, 21, 23, 25, 24), name = "Source:")+ geom_text(data = ofavCloneDendPoints, aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
+  geom_hline(yintercept = 0.14, color = "red", lty = 5, size = 0.75)+
+  #geom_text(data = subset(ofavCloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .010), label = label), angle = 90) +
+  labs(y = "Genetic distance (1 - IBS)") +
+  guides(fill = guide_legend(override.aes = list(shape = 22)))+
+  theme_classic()
+
+ofavCloneDend = ofavCloneDendA + theme(
+  axis.title.x = element_blank(),
+  axis.text.x = element_blank(),
+  axis.line.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.title.y = element_text(size = 12, color = "black", angle = 90),
+  axis.text.y = element_text(size = 10, color = "black"),
+  axis.line.y = element_line(),
+  axis.ticks.y = element_line(),
+  panel.grid = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  plot.background = element_blank(),
+  legend.key = element_blank(),
+  legend.title = element_text(size = 12),
+  legend.text = element_text(size = 10),
+  legend.position = "bottom")
+
+
+ofavCloneDend
+ggsave("../figures/ofavCloneDendDisease_1year.png", plot = ofavCloneDend, height = 8, width = 14, units = "cm", dpi = 300)
+```
+### PCLI IBS W Disease scores ###
+
+Use ibs matrix to identify clones with hierachial clustering in ```R```. ```scp``` to local machine and run chunk below in ```R```
+
+```{r, Dendrogram With Clones, fig.dim = c(13, 4.75)}
+CloneBams = read.csv("../pcliRTT/pcliMetaDataDisease.csv")
+
+pcliCloneBams = CloneBams[-c(24:27), ]
+
+#mcavCloneBams=filter(cloneBams, Species == "MCAV")%>%filter(cloneBams, SAMPLE != "12")
+# list ofsample files
+
+pcliCloneMa = as.matrix(read.table("../pclirtt/pcliClones.ibsMat")) # reads in IBS matrix produced by ANGSD 
+
+dimnames(pcliCloneMa) = list(pcliCloneBams[,1],pcliCloneBams[,1])
+pcliClonesHc = hclust(as.dist(pcliCloneMa),"ave")
+
+pcliCloneDend = pcliCloneMa %>% as.dist() %>% hclust(.,"ave") %>% as.dendrogram()
+pcliCloneDData = pcliCloneDend %>% dendro_data()
+
+pcliCloneDisease = pcliCloneBams$Disease
+pcliCloneSource = pcliCloneBams$Source
+
+# Making the branches hang shorter so we can easily see clonal groups
+pcliCloneDData$segments$yend2 = pcliCloneDData$segments$yend
+for(i in 1:nrow(pcliCloneDData$segments)) {
+  if (pcliCloneDData$segments$yend2[i] == 0) {
+    pcliCloneDData$segments$yend2[i] = (pcliCloneDData$segments$y[i] - 0.01)}}
+pcliCloneDendPoints = pcliCloneDData$labels
+pcliCloneDendPoints$Disease = pcliCloneDisease[order.dendrogram(pcliCloneDend)]
+pcliCloneDendPoints$Source = pcliCloneSource[order.dendrogram(pcliCloneDend)]
+#pcliCloneDendPoints$depth=pcliCloneDepth[order.dendrogram(pcliCloneDend)]
+pcliCloneSource = pcliCloneBams$Source
+pcliCloneDisease = pcliCloneBams$Disease
+#pcliCloneDendPoints$Source=pcliCloneSource[order.dendrogram(pcliCloneDend)]
+rownames(pcliCloneDendPoints) = pcliCloneDendPoints$label
+# Making points at the leaves to place symbols for populations
+point = as.vector(NA)
+for(i in 1:nrow(pcliCloneDData$segments)) {
+  if (pcliCloneDData$segments$yend[i] == 0) {
+    point[i] = pcliCloneDData$segments$y[i] - 0.01
+  } else {
+    point[i] = NA}}
+pcliCloneDendPoints$y = point[!is.na(point)]
+#techReps = c("SFK066.1", "SFK066.2", "SFK066.3", "SFK162.1", "SFK162.2", "SFK162.3", "SFK205.1", "SFK205.2", "SFK205.3")
+#cloneDendPoints$depth = factor(cloneDendPoints$depth)
+#cloneDendPoints$depth = factor(cloneDendPoints$depth, levels(cloneDendPoints$depth)[c(2,1)])
+levels(pcliCloneDendPoints$Source)
+pcliCloneDendPoints$Source = factor(pcliCloneDendPoints$Source)
+pcliCloneDendPoints$Disease = factor(pcliCloneDendPoints$Disease)
+levels(pcliCloneDendPoints$Disease)
+pcliCloneDendPoints$Disease = factor(pcliCloneDendPoints$Disease,levels(pcliCloneDendPoints$Disease)[c(1, 2, 3)])
+
+
+
+#######
+pcliCloneDendA = ggplot() +
+  geom_segment(data = segment(pcliCloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
+  geom_point(data = pcliCloneDendPoints, aes(x = x, y = y, fill = Disease, shape = Source), size = 4, stroke = 0.25) +
+  scale_fill_manual(values = c("red", "green"), name= "Disease:")+
+  scale_shape_manual(values = c(21, 23, 25, 24), name = "Source:")+ geom_text(data = pcliCloneDendPoints, aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
+  geom_hline(yintercept = 0.175, color = "red", lty = 5, size = 0.75)+
+  #geom_text(data = subset(pcliCloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .010), label = label), angle = 90) +
+  labs(y = "Genetic distance (1 - IBS)") +
+  guides(fill = guide_legend(override.aes = list(shape = 22)))+
+  theme_classic()
+
+pcliCloneDend = pcliCloneDendA + theme(
+  axis.title.x = element_blank(),
+  axis.text.x = element_blank(),
+  axis.line.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.title.y = element_text(size = 12, color = "black", angle = 90),
+  axis.text.y = element_text(size = 10, color = "black"),
+  axis.line.y = element_line(),
+  axis.ticks.y = element_line(),
+  panel.grid = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  plot.background = element_blank(),
+  legend.key = element_blank(),
+  legend.title = element_text(size = 12),
+  legend.text = element_text(size = 10),
+  legend.position = "bottom")
+
+
+pcliCloneDend
+ggsave("../figures/pcliCloneDendDisease_1year.png", plot = pcliCloneDend, height = 8, width = 14, units = "cm", dpi = 300)
+```
+
+######  Host PCoA with IBS ######
+
+Need to do with NO clones .ibsMat files ********************************
+
+MCAV
+```{r}
+snpMa = as.matrix(read.table("../mcavRTT/MCAVNoClones.ibsMat"))
+mcavMds = cmdscale(snpMa, eig = TRUE, x.ret = TRUE)
+# Determine percent variation captured on each axis
+# Calculate the eigenvalues so later we can figure out % variation shown on each Principal Coordinate
+mcavSnpPcoaVar = round(mcavMds$eig/sum(mcavMds$eig)*100, 1)
+mcavSnpPcoaVar
+# Format data to plot
+mcavSnpPcoaValues = mcavMds$points
+mcavSnpPcoaValues
+
+snpI2P = read.csv("../mcavRTT/mcav2columntable.csv") # 2-column tab-delimited table of individual assignments to populations; must be in the same order as samples in the bam list or vcf file.
+row.names(snpI2P) = snpI2P[,1]
+mcavSnpPcoaValues=cbind(snpI2P, mcavSnpPcoaValues)
+mcavSnpPcoaValues =as.data.frame(mcavSnpPcoaValues, sample = rownames(mcavSnpPcoaValues))
+colnames(mcavSnpPcoaValues)[4] <- "PCo1"
+colnames(mcavSnpPcoaValues)[5] <- "PCo2"
+colnames(mcavSnpPcoaValues)[3] <- "disease"
+
+mcavSnpPcoaValues$source.disease = paste(mcavSnpPcoaValues$source, mcavSnpPcoaValues$disease)
+mcavSnpPcoaValues
+
+snpPCoAm = merge(mcavSnpPcoaValues, aggregate(cbind(mean.x=PCo1,mean.y=PCo2)~source.disease, mcavSnpPcoaValues, mean), by="source.disease")
+snpPCoAm$disease=as.factor(snpPCoAm$disease)
+#snpPCoAm$disease = factor(snpPCoAm$disease, levels(snpPCoAm$disease)[c(0,1)])
+#snpPCoAm$disease %>% replace_na(list(disease = 1))
+levels(snpPCoAm$disease) = c("No SCTLD", "SCTLD Present")
+
+# SNP PCoA biplot
+mcavSnpPcoaPlotA = ggplot(snpPCoAm, aes(x = PCo1, y = PCo2, fill = disease, color = disease, shape = source))+
+  geom_hline(yintercept = 0, color = "gray90", size = 0.5) +
+  geom_vline(xintercept = 0, color = "gray90", size = 0.5) +
+  # stat_ellipse(data = subset(snpPCoAm, type = "t", geom = "polygon", alpha = 0.1)) + #ellipse
+  # scale_linetype_manual(values=c(0,1), breaks=c("No SCTLD","SCTLD Present"), name = "Disease Status")+
+  geom_point(aes(x = PCo1, y = PCo2, shape = source), size = 3, alpha = 1, color = "black") + #individual's points indicated by circles
+  scale_shape_manual(values = c(21,25,22), breaks=c("FWC","MOTE","UM"), name = "Source") +
+  # geom_point(aes(x = mean.x, y = mean.y, shape = disease), size = 5, color = "black") + #population centroids indicated by triangles
+  #scale_fill_manual(values=c("green","red"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present"))+
+   scale_color_manual(values=c("green","red"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present")) +
+  xlab(paste ("PCo 1 (", mcavSnpPcoaVar[1],"%)", sep = "")) + #Prints percent variation explained by first axis
+  ylab(paste ("PCo 2 (", mcavSnpPcoaVar[2],"%)", sep = "")) + #Prints percent variation explained by second axis
+   guides(shape = guide_legend(order = 1), fill = guide_legend(override.aes = list(shape = 22, size = 4), order = 1))+
+  theme_bw()
+
+mcavSnpPcoaPlot = mcavSnpPcoaPlotA +
+  theme(axis.title.x = element_text(color = "black", size = 10),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.line.x = element_blank(),
+        axis.title.y = element_text(color = "black", size = 10),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.line.y = element_blank(),
+        legend.position = "left",
+        panel.border = element_rect(color = "black", size = 1.2),
+        panel.background = element_rect(fill = "white"),
+        plot.background = element_rect(fill = "white"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+mcavSnpPcoaPlot
+ggsave("../figures/mcavSnpPcoaPlot.png", plot = mcavSnpPcoaPlot, height = 10, width = 20, units = "in", dpi = 300)
+```
+OFAV
+
+```{r}
+ofavsnpMa = as.matrix(read.table("../ofavRTT/ofavNoClones.ibsMat"))
+ofavMds = cmdscale(ofavsnpMa, eig = TRUE, x.ret = TRUE)
+# Determine percent variation captured on each axis
+# Calculate the eigenvalues so later we can figure out % variation shown on each Principal Coordinate
+ofavSnpPcoaVar = round(ofavMds$eig/sum(ofavMds$eig)*100, 1)
+ofavSnpPcoaVar
+# Format data to plot
+ofavSnpPcoaValues = ofavMds$points
+ofavSnpPcoaValues
+
+ofavsnpI2P = read.csv("../ofavRTT/ofav2columntable.csv") # 2-column tab-delimited table of individual assignments to populations; must be in the same order as samples in the bam list or vcf file.
+row.names(ofavsnpI2P) = ofavsnpI2P[,1]
+ofavSnpPcoaValues=cbind(ofavsnpI2P, ofavSnpPcoaValues)
+ofavSnpPcoaValues =as.data.frame(ofavSnpPcoaValues, sample = rownames(ofavSnpPcoaValues))
+colnames(ofavSnpPcoaValues)[6] <- "PCo1"
+colnames(ofavSnpPcoaValues)[7] <- "PCo2"
+colnames(ofavSnpPcoaValues)[5] <- "disease"
+
+ofavSnpPcoaValues$source.disease = paste(ofavSnpPcoaValues$source, ofavSnpPcoaValues$disease)
+ofavSnpPcoaValues
+
+snpPCoAo = merge(ofavSnpPcoaValues, aggregate(cbind(mean.x=PCo1,mean.y=PCo2)~source.disease, ofavSnpPcoaValues, mean), by="source.disease")
+snpPCoAo$disease=as.factor(snpPCoAo$disease)
+#snpPCoAm$disease = factor(snpPCoAm$disease, levels(snpPCoAm$disease)[c(0,1)])
+#snpPCoAm$disease %>% replace_na(list(disease = 1))
+levels(snpPCoAo$disease) = c("No SCTLD", "SCTLD Present")
+
+# SNP PCoA biplot
+ofavSnpPcoaPlotA = ggplot(snpPCoAo, aes(x = PCo1, y = PCo2, fill = disease, color = disease, shape = source))+
+  geom_hline(yintercept = 0, color = "gray90", size = 0.5) +
+  geom_vline(xintercept = 0, color = "gray90", size = 0.5) +
+  # stat_ellipse(data = subset(snpPCoAm, type = "t", geom = "polygon", alpha = 0.1)) + #ellipse
+  # scale_linetype_manual(values=c(0,1), breaks=c("No SCTLD","SCTLD Present"), name = "Disease Status")+
+  geom_point(aes(x = PCo1, y = PCo2, shape = source), size = 3, alpha = 0.5, color = "black") + #individual's points indicated by circles
+  scale_shape_manual(values = c(21,25,22,24,23), breaks=c("CRF","FWC","MOTE","RR","UM"), name = "Source") +
+  # geom_point(aes(x = mean.x, y = mean.y, shape = disease), size = 5, color = "black") + #population centroids indicated by triangles
+  #scale_fill_manual(values=c("green","red"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present"))+
+   scale_color_manual(values=c("green","red"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present")) +
+  xlab(paste ("PCo 1 (", ofavSnpPcoaVar[1],"%)", sep = "")) + #Prints percent variation explained by first axis
+  ylab(paste ("PCo 2 (", ofavSnpPcoaVar[2],"%)", sep = "")) + #Prints percent variation explained by second axis
+   guides(shape = guide_legend(order = 1), fill = guide_legend(override.aes = list(shape = 22, size = 4), order = 1, title = "Disease Status"))+
+  theme_bw()
+
+ofavSnpPcoaPlot = ofavSnpPcoaPlotA +
+  theme(axis.title.x = element_text(color = "black", size = 10),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.line.x = element_blank(),
+        axis.title.y = element_text(color = "black", size = 10),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.line.y = element_blank(),
+        legend.position = "left",
+        panel.border = element_rect(color = "black", size = 1.2),
+        panel.background = element_rect(fill = "white"),
+        plot.background = element_rect(fill = "white"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+ofavSnpPcoaPlot
+ggsave("../figures/ofavSnpPcoaPlot.png", plot = ofavSnpPcoaPlot, height = 10, width = 20, units = "in", dpi = 300)
+```
+PCLI
+
+```{r}
+pclisnpMa = as.matrix(read.table("../pcliRTT/PCLINoClones.ibsMat"))
+pcliMds = cmdscale(pclisnpMa, eig = TRUE, x.ret = TRUE)
+# Determine percent variation captured on each axis
+# Calculate the eigenvalues so later we can figure out % variation shown on each Principal Coordinate
+pcliSnpPcoaVar = round(pcliMds$eig/sum(pcliMds$eig)*100, 1)
+pcliSnpPcoaVar
+# Format data to plot
+pcliSnpPcoaValues = pcliMds$points
+pcliSnpPcoaValues
+
+pclisnpI2P = read.csv("../pcliRTT/pcli2columntable.csv") # 2-column tab-delimited table of individual assignments to populations; must be in the same order as samples in the bam list or vcf file.
+row.names(pclisnpI2P) = pclisnpI2P[,1]
+pcliSnpPcoaValues=cbind(pclisnpI2P, pcliSnpPcoaValues)
+pcliSnpPcoaValues =as.data.frame(pcliSnpPcoaValues, sample = rownames(pcliSnpPcoaValues))
+colnames(pcliSnpPcoaValues)[5] <- "PCo1"
+colnames(pcliSnpPcoaValues)[6] <- "PCo2"
+colnames(pcliSnpPcoaValues)[4] <- "disease"
+
+pcliSnpPcoaValues$source.disease = paste(pcliSnpPcoaValues$source, pcliSnpPcoaValues$disease)
+pcliSnpPcoaValues
+
+snpPCoAp = merge(pcliSnpPcoaValues, aggregate(cbind(mean.x=PCo1,mean.y=PCo2)~source.disease, pcliSnpPcoaValues, mean), by="source.disease")
+snpPCoAp$disease=as.factor(snpPCoAp$disease)
+#snpPCoAm$disease = factor(snpPCoAm$disease, levels(snpPCoAm$disease)[c(0,1)])
+#snpPCoAm$disease %>% replace_na(list(disease = 1))
+levels(snpPCoAp$disease) = c("No SCTLD", "SCTLD Present")
+
+# SNP PCoA biplot
+pcliSnpPcoaPlotA = ggplot(snpPCoAp, aes(x = PCo1, y = PCo2, fill = disease, color = disease, shape = source))+
+  geom_hline(yintercept = 0, color = "gray90", size = 0.5) +
+  geom_vline(xintercept = 0, color = "gray90", size = 0.5) +
+  # stat_ellipse(data = subset(snpPCoAm, type = "t", geom = "polygon", alpha = 0.1)) + #ellipse
+  # scale_linetype_manual(values=c(0,1), breaks=c("No SCTLD","SCTLD Present"), name = "Disease Status")+
+  geom_point(aes(x = PCo1, y = PCo2, shape = source), size = 3, alpha = 1, color = "black") + #individual's points indicated by circles
+  scale_shape_manual(values = c(21,25,22,24,23), breaks=c("FWC","MOTE","RR","UM"), name = "Source") +
+  # geom_point(aes(x = mean.x, y = mean.y, shape = disease), size = 5, color = "black") + #population centroids indicated by triangles
+  #scale_fill_manual(values=c("green","red"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present"))+
+   scale_color_manual(values=c("green","red"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present")) +
+  xlab(paste ("PCo 1 (", pcliSnpPcoaVar[1],"%)", sep = "")) + #Prints percent variation explained by first axis
+  ylab(paste ("PCo 2 (", pcliSnpPcoaVar[2],"%)", sep = "")) + #Prints percent variation explained by second axis
+   guides(shape = guide_legend(order = 1), fill = guide_legend(override.aes = list(shape = 22, size = 4), order = 1, title = "Disease Status"))+
+  theme_bw()
+
+pcliSnpPcoaPlot = pcliSnpPcoaPlotA +
+  theme(axis.title.x = element_text(color = "black", size = 10),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.line.x = element_blank(),
+        axis.title.y = element_text(color = "black", size = 10),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.line.y = element_blank(),
+        legend.position = "left",
+        panel.border = element_rect(color = "black", size = 1.2),
+        panel.background = element_rect(fill = "white"),
+        plot.background = element_rect(fill = "white"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+pcliSnpPcoaPlot
+ggsave("../figures/pcliSnpPcoaPlot.png", plot = pcliSnpPcoaPlot, height = 10, width = 20, units = "in", dpi = 300)
+```
+
