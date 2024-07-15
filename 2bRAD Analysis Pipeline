@@ -2,8 +2,7 @@
 
 #Login to PUTTY
 koko-login.hpc.fau.edu
-sydneybell2021
-fishRBFFS!8
+#type username and then password
 
 #Making a .bashrc
 nano .bashrc
