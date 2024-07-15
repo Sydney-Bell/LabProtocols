@@ -1,0 +1,17 @@
+SAMPLE,Bams,Source Colony ID,sampleID,Source,Disease,Treated,Date Collected,Nursery,Species
+1,rtt_01,MC14,MC_001,FWC,N,N,5/3/2021,in situ,MCAV
+2,rtt_02,MC35,MC_002,FWC,N,N,5/3/2021,in situ,MCAV
+3,rtt_03,MC16,MC_003,FWC,N,N,5/3/2021,in situ,MCAV
+4,rtt_04,MC6,MC_004,UM,N,N,5/3/2021,in situ,MCAV
+5,rtt_05,MC20,MC_005,FWC,N,N,5/3/2021,in situ,MCAV
+6,rtt_06,MC13,MC_006,FWC,No Data,N,5/3/2021,in situ,MCAV
+7,rtt_07,MC19,MC_007,FWC,No Data,N,5/3/2021,in situ,MCAV
+8,rtt_08,MC5,MC_008,UM,Y,N,5/3/2021,in situ,MCAV
+9,rtt_09,MC1,MC_009,UM,N,N,5/3/2021,in situ,MCAV
+10,rtt_10,MC21,MC_010,FWC,N,N,5/3/2021,in situ,MCAV
+11,rtt_11,MC2,MC_011,UM,N,N,5/3/2021,in situ,MCAV
+13,rtt_13,MC27,MC_013,FWC,N,N,5/3/2021,in situ,MCAV
+14,rtt_14,MC4,MC_014,MOTE,N,N,5/3/2021,?,MCAV
+15,rtt_15,MC1,MC_015,MOTE,N,Y,5/3/2021,?,MCAV
+16,rtt_16,MC11,MC_016,MOTE,N,N,5/3/2021,?,MCAV
+17,rtt_17,MC33,MC_017,MOTE,N,N,5/3/2021,?,MCAV
