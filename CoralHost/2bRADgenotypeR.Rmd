@@ -20,16 +20,104 @@ pacman::p_load("cowplot", "ggrepel", "ggspatial", "paletteer", "patchwork", "rgd
 #"Imap", "kableExtra","flextable",
 options("scipen" = 10)
 ```
+Map of Study Sites
+
+```{r}
+RTTSites = read.csv("../csv/studysitesRTT.csv", header = TRUE)
+RTTSites$Region = factor(RTTSites$Region)
+RTTSites$Region = factor(RTTSites$Region, levels = levels(RTTSites$Region)[c(1,2,3,4,5,6)])
+
+colnames(RTTSites)[6] = "site"
+colnames(RTTSites)[7] = "latDD"
+colnames(RTTSites)[8] = "longDD"
+RTTSites$site = factor(RTTSites$site)
+RTTSites$site = factor(RTTSites$site, levels = levels(RTTSites$site))
+
+RTTPops = RTTSites %>% group_by(Region) %>% summarise(latDD = mean(latDD), longDD = mean(longDD), n = n()) %>% droplevels()
+
+RTTSampleSites = RTTSites %>% group_by(Region, site) %>% summarise(latDD = min(latDD), longDD = min(longDD))
+
+library(sf)
+require(sf)
+CoralECA <- st_read("../../data/Kristin_Jacobs_Coral_Reef_Ecosystem_Conversation_Area.shp") %>% st_transform(crs = 4326)
+fknmsBounds <- st_read("../../data/fknms_py.shp") %>% st_transform(crs = 4326)
+BNP <- st_read("../../data/biscayneNP.shp") %>%  st_set_crs(4326)
+
+st_crs(BNP)
+
+
+states = st_as_sf(ne_states(country = c("United States of America")), scale = "count",  crs = 4326) %>% filter(name_en %in% c("Florida")) 
+florida = read_sf("../data/FloridaShoreline.shp") %>% st_transform(crs = 4326)
+bathy = read_sf("../data/Bathy.shp") %>% st_transform(crs = 4326) %>% subset(subset = DATASET %in% c("fl_shelf", "fl_coast"))
+
+# floridaMap
+
+largeMap = ggplot() +
+  geom_sf(data = states, fill = "white", size = 0.3) +
+  annotation_scale(location = "bl", pad_x = unit(1.85, "cm")) +
+  annotation_north_arrow(location = "tr", style = north_arrow_minimal(), pad_x = unit(-0.3, "cm")) +
+  coord_sf(xlim = c(-82.5, -79.5), ylim = c(24.3, 27.5)) +
+  geom_point(data = RTTSampleSites, aes(x = longDD, y = latDD, fill = site, color = Region), size = 2)+
+  theme_bw() +
+  theme(legend.title = element_text(size = 9, face = "bold"),
+        axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        panel.background = element_rect(fill = "aliceblue"),
+        panel.border = element_rect(color = "black", size = 0.75, fill = NA),
+        legend.text = element_text(size = 9),
+        legend.position = "none",
+        plot.background = element_blank())
+
+largeMap
+
+ggsave("../figures/RRTMAP1.png", plot = largeMap, width = 16, height = 20, units = "cm", dpi = 300)
+ggsave("../figures/figure1.svg", plot = largeMap, width = 16, height = 16, units = "cm", dpi = 300)
+
+install.packages("ggpattern")
+library("ggpattern")
+
+finalMap = ggplot() +
+  # annotation_scale(location = "br", pad_x = unit(1.9, "cm")) +
+  annotation_scale(location = "bl", pad_x = unit(1.9, "cm")) +
+  # coord_sf(xlim = c(-82.5, -79.5), ylim = c(24.3, 27.5)) +
+  coord_sf(xlim = c(-82.5, -79.5), ylim = c(24.3, 27.5)) +
+  scale_x_continuous(breaks = c(seq(-82.5, -79.5, by = .5))) +
+  scale_y_continuous(breaks = c(seq(24.3, 27.5, by = .5))) +
+  geom_sf(data = fknmsBounds, color = "skyblue1", fill = "skyblue1", alpha = .2, aes(size = 5)) +
+  geom_sf(data = CoralECA, color = "navy", fill = "navy", alpha = .1, size = 10) +
+  geom_sf(data = BNP, color = "royalblue1", fill = "royalblue1", alpha = .1, size = 10)+
+  geom_sf(data = states, fill = "white", size = 0.3) +
+  annotation_north_arrow(location = "tr", style = north_arrow_minimal(), pad_x = unit(-0.3, "cm")) +
+  coord_sf(xlim = c(-82.5, -79.5), ylim = c(24.3, 27.5)) +
+  geom_point(data = RTTSampleSites, aes(x = longDD, y = latDD, fill = site, color = Region), size = 2.5)+
+  guides(fill = FALSE, color = FALSE)+
+  theme_bw() +
+  theme(legend.title = element_text(size = 9, face = "bold"),
+        axis.ticks = element_line(color = "black"),
+        axis.text = element_text(color = "black"),
+        axis.title = element_blank(),
+        panel.background = element_rect(fill = "aliceblue"),
+        panel.border = element_rect(color = "black", size = 0.75, fill = NA),
+        legend.text = element_text(size = 9),
+        legend.position = "bottom",
+        plot.background = element_blank())
+
+finalMap
+ggsave("../figures/finalMap.png", plot = finalMap, width = 16, height = 20, units = "cm", dpi = 300)
+```
+
 #MCAV IBS w clones
 
 Use ibs matrix to identify clones with hierachial clustering in ```R```. ```scp``` to local machine and run chunk below in ```R```
 ```{r, Dendrogram With Clones, fig.dim = c(13, 4.75)}
-mcavCloneBams = read.csv("../mcavRTT/MCAVrttMetaDataBams.csv")
+palette()
+mcavCloneBams = read.csv("../mcavRTT/MCAVrttMetaDataBams.csv")[-17:-25,]
 
 #mcavCloneBams=filter(cloneBams, Species == "MCAV")%>%filter(cloneBams, SAMPLE != "12")
 # list ofsample files
 
-mcavCloneMa = as.matrix(read.table("../mcavRTT/MCAVClones.ibsMat")) # reads in IBS matrix produced by ANGSD 
+mcavCloneMa = as.matrix(read.table("../mcavRTT/mcavClonesdata.ibsMat"))#[-17:-25,-17:-25] # reads in IBS matrix produced by ANGSD 
 
 dimnames(mcavCloneMa) = list(mcavCloneBams[,1],mcavCloneBams[,1])
 mcavClonesHc = hclust(as.dist(mcavCloneMa),"ave")
@@ -57,32 +145,30 @@ for(i in 1:nrow(mcavCloneDData$segments)) {
   } else {
     point[i] = NA}}
 mcavCloneDendPoints$y = point[!is.na(point)]
-#techReps = c("SFK066.1", "SFK066.2", "SFK066.3", "SFK162.1", "SFK162.2", "SFK162.3", "SFK205.1", "SFK205.2", "SFK205.3")
-#cloneDendPoints$depth = factor(cloneDendPoints$depth)
-#cloneDendPoints$depth = factor(cloneDendPoints$depth, levels(cloneDendPoints$depth)[c(2,1)])
-mcavCloneDendPoints$Source = factor(mcavCloneDendPoints$Source)
-#cloneDendPoints$Source = factor(mcavCloneDendPoints$Source,levels(mcavCloneDendPoints$Source)[c(4, 1, 3, 2)])
+
+mcavCloneDendPoints$Source = factor(mcavCloneDendPoints$Source, levels = c("FWC","MOTE","UM"))
+
 library(paletteer)
 library(ggplot2)
-flPal1 = paletteer_d("vapoRwave::jazzCup")[c(2, 3, 1, 5)]
+flPal1 = paletteer_d("vapoRwave::jazzCup")[c(2, 3, 5)]
 mcavCloneDendA = ggplot() +
   geom_segment(data = segment(mcavCloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
   geom_point(data = mcavCloneDendPoints, aes(x = x, y = y, fill = Source), size = 4, shape=21) +
   #scale_fill_brewer(palette = "Dark2", name = "Population") +
   scale_fill_manual(values = flPal1, name= "Source:") +
   #scale_shape_manual(values = c(24, 25), name = "Depth Zone:") +
-  geom_hline(yintercept = 0.145, color = "red", lty = 5, size = 0.75) + # creating a dashed line to indicate a clonal distance threshold
+  geom_hline(yintercept = 0.17, color = "red", lty = 5, size = 0.75) + # creating a dashed line to indicate a clonal distance threshold
   geom_text(data = (mcavCloneDendPoints), aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
   #geom_text(data = subset(cloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .015), label = label), angle = 90) +
   labs(y = "Genetic distance (1 - IBS)") +
-  guides(fill = guide_legend(override.aes = list(shape = 22, size = 10)), shape = guide_legend(override.aes = list(size = 8), order = 1)) +
+  guides(fill = guide_legend(override.aes = list(shape = 22, size = 7)), shape = guide_legend(override.aes = list(size = 8), order = 1)) +
   theme_classic()
 mcavCloneDend = mcavCloneDendA + theme(
   axis.title.x = element_blank(),
   axis.text.x = element_blank(),
   axis.line.x = element_blank(),
   axis.ticks.x = element_blank(),
-  axis.title.y = element_text(size = 24, color = "black", angle = 90),
+  axis.title.y = element_text(size = 15, color = "black", angle = 90),
   axis.text.y = element_text(size = 20, color = "black"),
   axis.line.y = element_line(),
   axis.ticks.y = element_line(),
@@ -90,21 +176,22 @@ mcavCloneDend = mcavCloneDendA + theme(
   panel.border = element_blank(),
   panel.background = element_blank(),
   legend.key = element_blank(),
-  legend.title = element_text(size = 24),
+  legend.title = element_text(size = 15),
   legend.text = element_text(size = 20),
   legend.position = "bottom")
 
 mcavCloneDend
+ggsave("../figures/mcavCloneDend.png", plot = mcavCloneDend, height = 8, width = 14, units = "cm", dpi = 300)
 ```
 
 #OFAV IBS w clones
 ```{r, Dendrogram With Clones, fig.dim = c(13, 4.75)}
-ofavCloneBams = read.csv("C:/Users/Sydney/Downloads/FAU/Genotype RTT/ofavMetaDataBams.csv")
+ofavCloneBams <- read_csv("../ofavRTT/ofavMetaDataBams.csv")
 
 #ofavCloneBams=filter(cloneBams, Species == "OFAV")%>%filter(cloneBams, SAMPLE != "44")
 # list ofsample files
 
-ofavCloneMa = as.matrix(read.table("C:/Users/Sydney/Downloads/FAU/Genotype RTT/ofavClones.ibsMat")) # reads in IBS matrix produced by ANGSD 
+ofavCloneMa <- as.matrix(read_table("../ofavRTT/ofavClones.ibsMat"))[,-31] # reads in IBS matrix produced by ANGSD 
 
 dimnames(ofavCloneMa) = list(ofavCloneBams[,1],ofavCloneBams[,1])
 ofavClonesHc = hclust(as.dist(ofavCloneMa),"ave")
@@ -132,9 +219,7 @@ for(i in 1:nrow(ofavCloneDData$segments)) {
   } else {
     point[i] = NA}}
 ofavCloneDendPoints$y = point[!is.na(point)]
-#techReps = c("SFK066.1", "SFK066.2", "SFK066.3", "SFK162.1", "SFK162.2", "SFK162.3", "SFK205.1", "SFK205.2", "SFK205.3")
-#cloneDendPoints$depth = factor(cloneDendPoints$depth)
-#cloneDendPoints$depth = factor(cloneDendPoints$depth, levels(cloneDendPoints$depth)[c(2,1)])
+
 ofavCloneDendPoints$Source = factor(ofavCloneDendPoints$Source)
 #cloneDendPoints$Source = factor(ofavCloneDendPoints$Source,levels(ofavCloneDendPoints$Source)[c(4, 1, 3, 2)])
 flPal = paletteer_d("vapoRwave::jazzCup")[c(1:5)]
@@ -172,19 +257,23 @@ ofavCloneDend
 
 #PCLI IBS w clones
 ```{r}
-pcliCloneBams = read.csv("C:/Users/Sydney/Downloads/FAU/Genotype RTT/pcliMetaDataBams.csv")
+install.packages(scales)
+library(scales)
+show_col(flPal)
+pcliCloneBams <- read_csv("../pcliRTT/pcliMetaDataBams.csv")
+pcliCloneBams <- as.data.frame(pcliCloneBams)
 
 #pcliCloneBams=filter(cloneBams, Species == "pcli")%>%filter(cloneBams, SAMPLE != "44")
 # list ofsample files
 
-pcliCloneMa = as.matrix(read.table("C:/Users/Sydney/Downloads/FAU/Genotype RTT/pcliClones.ibsMat")) # reads in IBS matrix produced by ANGSD 
+pcliCloneMa1 = as.matrix(read.table("../pcliRTT/pcliClones2.ibsMat")) # reads in IBS matrix produced by ANGSD 
 
-dimnames(pcliCloneMa) = list(pcliCloneBams[,1],pcliCloneBams[,1])
-pcliClonesHc = hclust(as.dist(pcliCloneMa),"ave")
+dimnames(pcliCloneMa1) = list(pcliCloneBams[,1],pcliCloneBams[,1])
+pcliClonesHc = hclust(as.dist(pcliCloneMa1),"ave")
 
 library(dplyr)
 library(ggdendro)
-pcliCloneDend = pcliCloneMa %>% as.dist() %>% hclust(.,"ave") %>% as.dendrogram()
+pcliCloneDend = pcliCloneMa1 %>% as.dist() %>% hclust(.,"ave") %>% as.dendrogram()
 pcliCloneDData = pcliCloneDend %>% dendro_data()
 
 # Making the branches hang shorter so we can easily see clonal groups
@@ -216,34 +305,36 @@ library(ggplot2)
 flPal = paletteer_d("vapoRwave::jazzCup")[c(2:6)]
 pcliCloneDendA = ggplot() +
   geom_segment(data = segment(pcliCloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
-  geom_point(data = pcliCloneDendPoints, aes(x = x, y = y, fill = Source), size = 4, shape=21) +
+  geom_point(data = pcliCloneDendPoints, aes(x = x, y = y, fill = Source, shape = Source), size = 4) +
   #scale_fill_brewer(palette = "Dark2", name = "Population") +
   scale_fill_manual(values = flPal, name= "Source:") +
-  #scale_shape_manual(values = c(24, 25), name = "Depth Zone:") +
+  scale_shape_manual(values = c(21, 23, 25, 24), name = "Source:") +
   geom_hline(yintercept = 0.13, color = "red", lty = 5, size = 0.75) + # creating a dashed line to indicate a clonal distance threshold
-  geom_text(data = (pcliCloneDendPoints), aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
-  geom_text(data = subset(pcliCloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .015), label = label), angle = 90) +
+  geom_text(data = (pcliCloneDendPoints), aes(x = x, y = (y - .03), label = label), angle = 90) + # spacing technical replicates further from leaf
+  geom_text(data = subset(pcliCloneDendPoints, subset = pcliCloneDendPoints$label %in% c("72.1","72.3","73")), aes(x = x, y = (y - .03), label = label), angle = 90) +
   labs(y = "Genetic distance (1 - IBS)") +
-  guides(fill = guide_legend(override.aes = list(shape = 22, size = 10)), shape = guide_legend(override.aes = list(size = 8), order = 1)) +
+  guides(fill = guide_legend(override.aes = list(shape = c(21,23,25,24), size = 10))) +
   theme_classic()
 pcliCloneDend = pcliCloneDendA + theme(
   axis.title.x = element_blank(),
   axis.text.x = element_blank(),
   axis.line.x = element_blank(),
   axis.ticks.x = element_blank(),
-  axis.title.y = element_text(size = 24, color = "black", angle = 90),
-  axis.text.y = element_text(size = 20, color = "black"),
+  axis.title.y = element_text(size = 12, color = "black", angle = 90),
+  axis.text.y = element_text(size = 12, color = "black"),
   axis.line.y = element_line(),
   axis.ticks.y = element_line(),
   panel.grid = element_blank(),
   panel.border = element_blank(),
   panel.background = element_blank(),
   legend.key = element_blank(),
-  legend.title = element_text(size = 24),
-  legend.text = element_text(size = 20),
+  legend.title = element_text(size = 14),
+  legend.text = element_text(size = 14),
   legend.position = "bottom")
 
 pcliCloneDend
+
+ggsave("../figures/pcliCloneDendwShapes.png", plot = pcliCloneDend, width = 20, height = 10, units = "cm", dpi = 300)
 ```
 #MCAV IBS W Disease scores
 
@@ -380,19 +471,20 @@ mcavCloneDendPoints$Source = factor(mcavCloneDendPoints$Source)
 mcavCloneDendPoints$Disease = factor(mcavCloneDendPoints$Disease)
 levels(mcavCloneDendPoints$Disease)
 mcavCloneDendPoints$Disease = factor(mcavCloneDendPoints$Disease,levels(mcavCloneDendPoints$Disease)[c(1, 2)])
-
+levels(mcavCloneDendPoints$Disease) = c("No SCTLD", "SCTLD Present")
 
 
 #######
 mcavCloneDendA = ggplot() +
   geom_segment(data = segment(mcavCloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
   geom_point(data = mcavCloneDendPoints, aes(x = x, y = y, fill = Disease, shape = Source), size = 4, stroke = 0.25) +
-  scale_fill_manual(values = c("red", "green"), name= "Disease:")+
+  scale_fill_manual(values = c("forestgreen","firebrick3"), name= "Disease:")+
   scale_shape_manual(values = c(21, 23, 24), name = "Source:")+ geom_text(data = mcavCloneDendPoints, aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
   geom_hline(yintercept = 0.17, color = "red", lty = 5, size = 0.75)+
   #geom_text(data = subset(mcavCloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .010), label = label), angle = 90) +
   labs(y = "Genetic distance (1 - IBS)") +
   guides(fill = guide_legend(override.aes = list(shape = 22)))+
+  coord_cartesian(xlim = c(0, 17), ylim = c(0.1, 0.35)) +
   theme_classic()
 
 mcavCloneDend = mcavCloneDendA + theme(
@@ -415,94 +507,7 @@ mcavCloneDend = mcavCloneDendA + theme(
 
 
 mcavCloneDend
-ggsave("../figures/mcavCloneDendDisease_1year.png", plot = mcavCloneDend, height = 8, width = 14, units = "cm", dpi = 300)
-```
-
-### MCAV IBS W Disease scores ###
-
-Use ibs matrix to identify clones with hierachial clustering in ```R```. ```scp``` to local machine and run chunk below in ```R```
-```{r, Dendrogram With Clones, fig.dim = c(13, 4.75)}
-mcavCloneBams = read.csv("../R files/mcavRTT/MCAVrttMetaDataDisease.csv")
-
-#mcavCloneBams=filter(cloneBams, Species == "MCAV")%>%filter(cloneBams, SAMPLE != "12")
-# list ofsample files
-
-mcavCloneMa = as.matrix(read.table("C:/Users/Sydney/Downloads/FAU/Genotype RTT/mcavClones.ibsMat")) # reads in IBS matrix produced by ANGSD 
-
-dimnames(mcavCloneMa) = list(mcavCloneBams[,1],mcavCloneBams[,1])
-mcavClonesHc = hclust(as.dist(mcavCloneMa),"ave")
-
-mcavCloneDend = mcavCloneMa %>% as.dist() %>% hclust(.,"ave") %>% as.dendrogram()
-mcavCloneDData = mcavCloneDend %>% dendro_data()
-
-mcavCloneDisease = mcavCloneBams$Disease
-mcavCloneSource = mcavCloneBams$Source
-
-# Making the branches hang shorter so we can easily see clonal groups
-mcavCloneDData$segments$yend2 = mcavCloneDData$segments$yend
-for(i in 1:nrow(mcavCloneDData$segments)) {
-  if (mcavCloneDData$segments$yend2[i] == 0) {
-    mcavCloneDData$segments$yend2[i] = (mcavCloneDData$segments$y[i] - 0.01)}}
-mcavCloneDendPoints = mcavCloneDData$labels
-mcavCloneDendPoints$Disease = mcavCloneDisease[order.dendrogram(mcavCloneDend)]
-mcavCloneDendPoints$Source = mcavCloneSource[order.dendrogram(mcavCloneDend)]
-#mcavCloneDendPoints$depth=mcavCloneDepth[order.dendrogram(mcavCloneDend)]
-mcavCloneSource = mcavCloneBams$Source
-mcavCloneDisease = mcavCloneBams$Disease
-#mcavCloneDendPoints$Source=mcavCloneSource[order.dendrogram(mcavCloneDend)]
-rownames(mcavCloneDendPoints) = mcavCloneDendPoints$label
-# Making points at the leaves to place symbols for populations
-point = as.vector(NA)
-for(i in 1:nrow(mcavCloneDData$segments)) {
-  if (mcavCloneDData$segments$yend[i] == 0) {
-    point[i] = mcavCloneDData$segments$y[i] - 0.01
-  } else {
-    point[i] = NA}}
-mcavCloneDendPoints$y = point[!is.na(point)]
-#techReps = c("SFK066.1", "SFK066.2", "SFK066.3", "SFK162.1", "SFK162.2", "SFK162.3", "SFK205.1", "SFK205.2", "SFK205.3")
-#cloneDendPoints$depth = factor(cloneDendPoints$depth)
-#cloneDendPoints$depth = factor(cloneDendPoints$depth, levels(cloneDendPoints$depth)[c(2,1)])
-levels(mcavCloneDendPoints$Source)
-mcavCloneDendPoints$Source = factor(mcavCloneDendPoints$Source)
-mcavCloneDendPoints$Disease = factor(mcavCloneDendPoints$Disease)
-levels(mcavCloneDendPoints$Disease)
-mcavCloneDendPoints$Disease = factor(mcavCloneDendPoints$Disease,levels(mcavCloneDendPoints$Disease)[c(1, 2, 3)])
-
-
-
-#######
-mcavCloneDendA = ggplot() +
-  geom_segment(data = segment(mcavCloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
-  geom_point(data = mcavCloneDendPoints, aes(x = x, y = y, fill = Disease, shape = Source), size = 4, stroke = 0.25) +
-  scale_fill_manual(values = c("red", "gray", "green"), name= "Disease:")+
-  scale_shape_manual(values = c(21, 23, 24), name = "Source:")+ geom_text(data = mcavCloneDendPoints, aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
-  geom_hline(yintercept = 0.17, color = "red", lty = 5, size = 0.75)+
-  #geom_text(data = subset(mcavCloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .010), label = label), angle = 90) +
-  labs(y = "Genetic distance (1 - IBS)") +
-  guides(fill = guide_legend(override.aes = list(shape = 22)))+
-  theme_classic()
-
-mcavCloneDend = mcavCloneDendA + theme(
-  axis.title.x = element_blank(),
-  axis.text.x = element_blank(),
-  axis.line.x = element_blank(),
-  axis.ticks.x = element_blank(),
-  axis.title.y = element_text(size = 12, color = "black", angle = 90),
-  axis.text.y = element_text(size = 10, color = "black"),
-  axis.line.y = element_line(),
-  axis.ticks.y = element_line(),
-  panel.grid = element_blank(),
-  panel.border = element_blank(),
-  panel.background = element_blank(),
-  plot.background = element_blank(),
-  legend.key = element_blank(),
-  legend.title = element_text(size = 12),
-  legend.text = element_text(size = 10),
-  legend.position = "bottom")
-
-
-mcavCloneDend
-
+ggsave("../figures/mcavCloneDendDisease_1year.png", plot = mcavCloneDend, height = 10, width = 20, units = "cm", dpi = 300)
 ```
 
 ### OFAV IBS W Disease scores ###
@@ -554,19 +559,20 @@ ofavCloneDendPoints$Source = factor(ofavCloneDendPoints$Source)
 ofavCloneDendPoints$Disease = factor(ofavCloneDendPoints$Disease)
 levels(ofavCloneDendPoints$Disease)
 ofavCloneDendPoints$Disease = factor(ofavCloneDendPoints$Disease,levels(ofavCloneDendPoints$Disease)[c(1, 2, 3)])
-
+levels(ofavCloneDendPoints$Disease) = c("No SCTLD", "SCTLD Present")
 
 
 #######
 ofavCloneDendA = ggplot() +
   geom_segment(data = segment(ofavCloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
   geom_point(data = ofavCloneDendPoints, aes(x = x, y = y, fill = Disease, shape = Source), size = 4, stroke = 0.25) +
-  scale_fill_manual(values = c("red", "green"), name= "Disease:")+
+  scale_fill_manual(values = c("forestgreen","firebrick3"), name= "Disease:")+
   scale_shape_manual(values = c(22, 21, 23, 25, 24), name = "Source:")+ geom_text(data = ofavCloneDendPoints, aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
   geom_hline(yintercept = 0.14, color = "red", lty = 5, size = 0.75)+
   #geom_text(data = subset(ofavCloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .010), label = label), angle = 90) +
   labs(y = "Genetic distance (1 - IBS)") +
   guides(fill = guide_legend(override.aes = list(shape = 22)))+
+  coord_cartesian(xlim = c(0, 30), ylim = c(0.1, 0.35)) +
   theme_classic()
 
 ofavCloneDend = ofavCloneDendA + theme(
@@ -583,13 +589,13 @@ ofavCloneDend = ofavCloneDendA + theme(
   panel.background = element_blank(),
   plot.background = element_blank(),
   legend.key = element_blank(),
-  legend.title = element_text(size = 12),
+  legend.title = element_text(size = 10),
   legend.text = element_text(size = 10),
   legend.position = "bottom")
 
 
 ofavCloneDend
-ggsave("../figures/ofavCloneDendDisease_1year.png", plot = ofavCloneDend, height = 8, width = 14, units = "cm", dpi = 300)
+ggsave("../figures/ofavCloneDendDisease_1year.png", plot = ofavCloneDend, height = 10, width = 20, units = "cm", dpi = 300)
 ```
 ### PCLI IBS W Disease scores ###
 
@@ -597,18 +603,19 @@ Use ibs matrix to identify clones with hierachial clustering in ```R```. ```scp`
 
 ```{r, Dendrogram With Clones, fig.dim = c(13, 4.75)}
 CloneBams = read.csv("../pcliRTT/pcliMetaDataDisease.csv")
+CloneBams <- as.data.frame(CloneBams)
 
-pcliCloneBams = CloneBams[-c(24:27), ]
+pcliCloneBams = CloneBams
 
 #mcavCloneBams=filter(cloneBams, Species == "MCAV")%>%filter(cloneBams, SAMPLE != "12")
 # list ofsample files
 
-pcliCloneMa = as.matrix(read.table("../pclirtt/pcliClones.ibsMat")) # reads in IBS matrix produced by ANGSD 
+pcliCloneMa2 = as.matrix(read.table("../pclirtt/pcliClones.ibsMat")) # reads in IBS matrix produced by ANGSD 
 
-dimnames(pcliCloneMa) = list(pcliCloneBams[,1],pcliCloneBams[,1])
-pcliClonesHc = hclust(as.dist(pcliCloneMa),"ave")
+dimnames(pcliCloneMa2) = list(pcliCloneBams[,1],pcliCloneBams[,1])
+pcliClonesHc = hclust(as.dist(pcliCloneMa2),"ave")
 
-pcliCloneDend = pcliCloneMa %>% as.dist() %>% hclust(.,"ave") %>% as.dendrogram()
+pcliCloneDend = pcliCloneMa2 %>% as.dist() %>% hclust(.,"ave") %>% as.dendrogram()
 pcliCloneDData = pcliCloneDend %>% dendro_data()
 
 pcliCloneDisease = pcliCloneBams$Disease
@@ -643,19 +650,20 @@ pcliCloneDendPoints$Source = factor(pcliCloneDendPoints$Source)
 pcliCloneDendPoints$Disease = factor(pcliCloneDendPoints$Disease)
 levels(pcliCloneDendPoints$Disease)
 pcliCloneDendPoints$Disease = factor(pcliCloneDendPoints$Disease,levels(pcliCloneDendPoints$Disease)[c(1, 2, 3)])
-
+levels(pcliCloneDendPoints$Disease) = c("No SCTLD", "SCTLD Present")
 
 
 #######
 pcliCloneDendA = ggplot() +
   geom_segment(data = segment(pcliCloneDData), aes(x = x, y = y, xend = xend, yend = yend2), size = 0.5) +
   geom_point(data = pcliCloneDendPoints, aes(x = x, y = y, fill = Disease, shape = Source), size = 4, stroke = 0.25) +
-  scale_fill_manual(values = c("red", "green"), name= "Disease:")+
+  scale_fill_manual(values = c("forestgreen","firebrick3"), name= "Disease:")+
   scale_shape_manual(values = c(21, 23, 25, 24), name = "Source:")+ geom_text(data = pcliCloneDendPoints, aes(x = x, y = (y - .015), label = label), angle = 90) + # spacing technical replicates further from leaf
   geom_hline(yintercept = 0.175, color = "red", lty = 5, size = 0.75)+
   #geom_text(data = subset(pcliCloneDendPoints, subset = !label %in% techReps), aes(x = x, y = (y - .010), label = label), angle = 90) +
   labs(y = "Genetic distance (1 - IBS)") +
   guides(fill = guide_legend(override.aes = list(shape = 22)))+
+  coord_cartesian(xlim = c(0, 23), ylim = c(0.1, 0.35)) +
   theme_classic()
 
 pcliCloneDend = pcliCloneDendA + theme(
@@ -678,7 +686,7 @@ pcliCloneDend = pcliCloneDendA + theme(
 
 
 pcliCloneDend
-ggsave("../figures/pcliCloneDendDisease_1year.png", plot = pcliCloneDend, height = 8, width = 14, units = "cm", dpi = 300)
+ggsave("../figures/pcliCloneDendDisease_1year.png", plot = pcliCloneDend, height = 10, width = 20, units = "cm", dpi = 300)
 ```
 
 ######  Host PCoA with IBS ######
@@ -701,9 +709,9 @@ snpI2P = read.csv("../mcavRTT/mcav2columntable.csv") # 2-column tab-delimited ta
 row.names(snpI2P) = snpI2P[,1]
 mcavSnpPcoaValues=cbind(snpI2P, mcavSnpPcoaValues)
 mcavSnpPcoaValues =as.data.frame(mcavSnpPcoaValues, sample = rownames(mcavSnpPcoaValues))
-colnames(mcavSnpPcoaValues)[4] <- "PCo1"
-colnames(mcavSnpPcoaValues)[5] <- "PCo2"
-colnames(mcavSnpPcoaValues)[3] <- "disease"
+colnames(mcavSnpPcoaValues)[5] <- "PCo1"
+colnames(mcavSnpPcoaValues)[6] <- "PCo2"
+colnames(mcavSnpPcoaValues)[4] <- "disease"
 
 mcavSnpPcoaValues$source.disease = paste(mcavSnpPcoaValues$source, mcavSnpPcoaValues$disease)
 mcavSnpPcoaValues
@@ -721,14 +729,14 @@ mcavSnpPcoaPlotA = ggplot(snpPCoAm, aes(x = PCo1, y = PCo2, fill = disease, colo
   # stat_ellipse(data = subset(snpPCoAm, type = "t", geom = "polygon", alpha = 0.1)) + #ellipse
   # scale_linetype_manual(values=c(0,1), breaks=c("No SCTLD","SCTLD Present"), name = "Disease Status")+
   geom_point(aes(x = PCo1, y = PCo2, shape = source), size = 3, alpha = 1, color = "black") + #individual's points indicated by circles
-  scale_shape_manual(values = c(21,25,22), breaks=c("FWC","MOTE","UM"), name = "Source") +
+  scale_shape_manual(values = c(22,23,25), breaks=c("FWC","MOTE","UM"), name = "Source") +
   # geom_point(aes(x = mean.x, y = mean.y, shape = disease), size = 5, color = "black") + #population centroids indicated by triangles
-  #scale_fill_manual(values=c("green","red"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present"))+
-   scale_color_manual(values=c("green","red"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present")) +
+   scale_fill_manual(values=c("forestgreen","firebrick3"), name = "Disease Status")+
+   scale_color_manual(values=c("forestgreen","firebrick3"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present")) +
   xlab(paste ("PCo 1 (", mcavSnpPcoaVar[1],"%)", sep = "")) + #Prints percent variation explained by first axis
   ylab(paste ("PCo 2 (", mcavSnpPcoaVar[2],"%)", sep = "")) + #Prints percent variation explained by second axis
    guides(shape = guide_legend(order = 1), fill = guide_legend(override.aes = list(shape = 22, size = 4), order = 1))+
-  theme_bw()
+  theme_bw() + labs(title = "MCAV")
 
 mcavSnpPcoaPlot = mcavSnpPcoaPlotA +
   theme(axis.title.x = element_text(color = "black", size = 10),
@@ -765,9 +773,9 @@ ofavsnpI2P = read.csv("../ofavRTT/ofav2columntable.csv") # 2-column tab-delimite
 row.names(ofavsnpI2P) = ofavsnpI2P[,1]
 ofavSnpPcoaValues=cbind(ofavsnpI2P, ofavSnpPcoaValues)
 ofavSnpPcoaValues =as.data.frame(ofavSnpPcoaValues, sample = rownames(ofavSnpPcoaValues))
-colnames(ofavSnpPcoaValues)[6] <- "PCo1"
-colnames(ofavSnpPcoaValues)[7] <- "PCo2"
-colnames(ofavSnpPcoaValues)[5] <- "disease"
+colnames(ofavSnpPcoaValues)[5] <- "PCo1"
+colnames(ofavSnpPcoaValues)[6] <- "PCo2"
+colnames(ofavSnpPcoaValues)[4] <- "disease"
 
 ofavSnpPcoaValues$source.disease = paste(ofavSnpPcoaValues$source, ofavSnpPcoaValues$disease)
 ofavSnpPcoaValues
@@ -785,14 +793,14 @@ ofavSnpPcoaPlotA = ggplot(snpPCoAo, aes(x = PCo1, y = PCo2, fill = disease, colo
   # stat_ellipse(data = subset(snpPCoAm, type = "t", geom = "polygon", alpha = 0.1)) + #ellipse
   # scale_linetype_manual(values=c(0,1), breaks=c("No SCTLD","SCTLD Present"), name = "Disease Status")+
   geom_point(aes(x = PCo1, y = PCo2, shape = source), size = 3, alpha = 0.5, color = "black") + #individual's points indicated by circles
-  scale_shape_manual(values = c(21,25,22,24,23), breaks=c("CRF","FWC","MOTE","RR","UM"), name = "Source") +
+  scale_shape_manual(values = c(21,22,23,24,25), breaks=c("CRF","FWC","MOTE","RR","UM"), name = "Source") +
   # geom_point(aes(x = mean.x, y = mean.y, shape = disease), size = 5, color = "black") + #population centroids indicated by triangles
-  #scale_fill_manual(values=c("green","red"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present"))+
-   scale_color_manual(values=c("green","red"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present")) +
+  scale_fill_manual(values=c("forestgreen","firebrick3"))+
+   scale_color_manual(values=c("forestgreen","firebrick3"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present")) +
   xlab(paste ("PCo 1 (", ofavSnpPcoaVar[1],"%)", sep = "")) + #Prints percent variation explained by first axis
   ylab(paste ("PCo 2 (", ofavSnpPcoaVar[2],"%)", sep = "")) + #Prints percent variation explained by second axis
-   guides(shape = guide_legend(order = 1), fill = guide_legend(override.aes = list(shape = 22, size = 4), order = 1, title = "Disease Status"))+
-  theme_bw()
+   guides(shape = guide_legend(order = 2), fill = guide_legend(override.aes = list(shape = 22, size = 4, alpha = 1), order = 1, title = "Disease Status"))+
+  theme_bw() + labs(title = "OFAV")
 
 ofavSnpPcoaPlot = ofavSnpPcoaPlotA +
   theme(axis.title.x = element_text(color = "black", size = 10),
@@ -849,14 +857,14 @@ pcliSnpPcoaPlotA = ggplot(snpPCoAp, aes(x = PCo1, y = PCo2, fill = disease, colo
   # stat_ellipse(data = subset(snpPCoAm, type = "t", geom = "polygon", alpha = 0.1)) + #ellipse
   # scale_linetype_manual(values=c(0,1), breaks=c("No SCTLD","SCTLD Present"), name = "Disease Status")+
   geom_point(aes(x = PCo1, y = PCo2, shape = source), size = 3, alpha = 1, color = "black") + #individual's points indicated by circles
-  scale_shape_manual(values = c(21,25,22,24,23), breaks=c("FWC","MOTE","RR","UM"), name = "Source") +
+  scale_shape_manual(values = c(22,23,24,25), breaks=c("FWC","MOTE","RR","UM"), name = "Source") +
   # geom_point(aes(x = mean.x, y = mean.y, shape = disease), size = 5, color = "black") + #population centroids indicated by triangles
-  #scale_fill_manual(values=c("green","red"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present"))+
-   scale_color_manual(values=c("green","red"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present")) +
+  scale_fill_manual(values=c("forestgreen","firebrick3"))+
+   scale_color_manual(values=c("forestgreen","firebrick3"), breaks=c("0","1"), name= "Disease Status", labels = c("No SCTLD", "SCTLD Present")) +
   xlab(paste ("PCo 1 (", pcliSnpPcoaVar[1],"%)", sep = "")) + #Prints percent variation explained by first axis
   ylab(paste ("PCo 2 (", pcliSnpPcoaVar[2],"%)", sep = "")) + #Prints percent variation explained by second axis
    guides(shape = guide_legend(order = 1), fill = guide_legend(override.aes = list(shape = 22, size = 4), order = 1, title = "Disease Status"))+
-  theme_bw()
+  theme_bw () + labs(title = "PCLI")
 
 pcliSnpPcoaPlot = pcliSnpPcoaPlotA +
   theme(axis.title.x = element_text(color = "black", size = 10),
@@ -873,7 +881,402 @@ pcliSnpPcoaPlot = pcliSnpPcoaPlotA +
         plot.background = element_rect(fill = "white"),
         panel.grid.major = element_blank(),
         panel.grid.minor = element_blank())
+
 pcliSnpPcoaPlot
 ggsave("../figures/pcliSnpPcoaPlot.png", plot = pcliSnpPcoaPlot, height = 10, width = 20, units = "in", dpi = 300)
+```
+
+Join Plots
+```{r}
+library(ggpubr)
+
+#SnpPcoaPlots3 = (mcavSnpPcoaPlot + theme(legend.position = "right"))|(ofavSnpPcoaPlot+ theme(legend.position = "right"))|(pcliSnpPcoaPlot+ theme(legend.position = "right")) +
+ # plot_annotation(tag_level = 'A') &
+ # theme(plot.tag = element_text(size = 16), 
+       # axis.text = element_blank(),
+       # axis.ticks = element_blank(),
+       # legend.position = "right",
+       # legend.title = element_text(color = "black", size = 10),
+        #legend.text = element_text(color = "black", size = 8))
+
+legend2 <- get_legend(ofavSnpPcoaPlot)
+SnpPcoaPlots3 = ggarrange(mcavSnpPcoaPlot, ofavSnpPcoaPlot, pcliSnpPcoaPlot, ncol = 1, nrow = 3, widths = c(1.05,2,1.35), common.legend = FALSE, legend.grob = legend2, legend = "right")
+SnpPcoaPlots3
+
+ggsave("./figures/SnpPcoaPlots3.png", plot = SnpPcoaPlots3, height = 25, width = 20, units = "cm", dpi = 300)
+```
+SNPs vs disease.status and survivorship
+
+```{r}
+#MCAV
+snpPCoAm <- snpPCoAm %>% left_join(its2ProfMCAV, by = "sample.number")
+snpPCoAm$percent.dead[snpPCoAm$percent.dead < 0.00001] <- '0'
+snpPCoAm$percent.dead[snpPCoAm$percent.dead > 0.00001] <- '1'
+mcavAdonis = adonis2(decostand(snpPCoAm[, c(6:9)], method = "normalize") ~ percent.dead, 
+                    data = snpPCoAm, permutations = 9999, method = "bray")
+mcavAdonis
+
+mcavAdonis2 = adonis2(decostand(snpPCoAm[, c(6:9)], method = "normalize") ~ disease.status, 
+                    data = snpPCoAm, permutations = 9999, method = "bray")
+mcavAdonis2
+
+#OFAV
+snpPCoAo <- snpPCoAo %>% left_join(its2ProfOFAV, by = "sample.number")
+snpPCoAo$percent.dead[snpPCoAo$percent.dead < 0.00001] <- '0'
+snpPCoAo$percent.dead[snpPCoAo$percent.dead > 0.00001] <- '1'
+ofavAdonis = adonis2(decostand(snpPCoAo[, c(6:9)], method = "normalize") ~ percent.dead, 
+                    data = snpPCoAo, permutations = 9999, method = "bray")
+ofavAdonis
+
+ofavAdonis2 = adonis2(decostand(snpPCoAo[, c(6:9)], method = "normalize") ~ disease.status, 
+                    data = snpPCoAo, permutations = 9999, method = "bray")
+ofavAdonis2
+
+#PCLI
+snpPCoAp <- snpPCoAp %>% left_join(its2ProfPCLI, by = "sample.number")
+snpPCoAp$percent.dead[snpPCoAp$percent.dead < 0.00001] <- '0'
+snpPCoAp$percent.dead[snpPCoAp$percent.dead > 0.00001] <- '1'
+pcliAdonis = adonis2(decostand(snpPCoAp[, c(6:9)], method = "normalize") ~ percent.dead, 
+                    data = snpPCoAp, permutations = 9999, method = "bray")
+pcliAdonis
+
+pcliAdonis2 = adonis2(decostand(snpPCoAp[, c(6:9)], method = "normalize") ~ disease.status, 
+                    data = snpPCoAp, permutations = 9999, method = "bray")
+pcliAdonis2
+
+#SNPs were not significantly different between survivorship groups
+#SNPs were not significantly different between disease status
+```
+
+*Survival Curves*
+
+```{r}
+library(survival)
+
+colonies = read.csv("../csv/FINALRenamed_Genotypes_RT_Survey_OUTPLANTS_M1_M15_FOR DEP_FAU.csv")
+
+colonies$MonitoringInterval <- as.numeric(colonies$MonitoringInterval)
+colonies["Status"][colonies["Status"] == "dead"] <- 1
+colonies["Status"][colonies["Status"] == "alive"] <- 0
+colonies["Status"][colonies["Status"] == "missing"] <- NA
+colonies %>% drop_na(Status)
+colonies$Status <- as.numeric(colonies$Status)
+s <- Surv(colonies$MonitoringInterval, colonies$Status)
+class(s)
+s
+head(colonies)
+
+#fit curve
+survfit(s~1)
+survfit(Surv(MonitoringInterval, Status)~1, data=colonies)
+sfit <- survfit(Surv(MonitoringInterval, Status)~1, data=colonies)
+sfit
+#fit curves separately by genet
+sfit <- survfit(Surv(MonitoringInterval, Status)~GenotypeID, data=colonies)
+sfit
+summary(sfit)
+plot(sfit)
+```
+
+use ggplot
+
+```{r}
+install.packages("survminer")
+library(survminer)
+ggsurvplot(sfit)
+
+ggsurvplot(sfit, conf.int=TRUE, pval=TRUE, risk.table=TRUE, 
+          legend.title="Status",  
+           title="Kaplan-Meier Curve for Genet Survival", 
+           risk.table.height=2)
+
+
+
+#facet by Species
+survplot <- ggsurvplot_facet(sfit, facet.by = "Species", data = colonies, conf.int=TRUE, pval=TRUE, risk.table=TRUE, legend = FALSE,
+           legend.title="Genet",  
+           title="Kaplan-Meier Curve for Genet Survival", 
+           risk.table.height=2)
+survplot
+survplotALL <- survplot + xlab("Month")
+survplotALL
+
+ggsave("../figures/survplot.png", plot = survplotALL, height = 25, width = 20, units = "cm", dpi = 300)
+
+
+#facet by Region
+survplot2 <- ggsurvplot_facet(sfit, facet.by = "Region", data = colonies, conf.int=TRUE, pval=TRUE, risk.table=TRUE, legend.title="Genet",  title="Kaplan-Meier Curve for Genet Survival", risk.table.height=2)
+survplot2
+
+ggsave("../figures/survplot2.png", plot = survplot2, height = 25, width = 20, units = "cm", dpi = 300)
+
+#facet by Site
+colonies$RegionSite <- as.numeric(colonies$RegionSite)
+survplot3 <- ggsurvplot_facet(sfit, facet.by = "RegionSite", data = colonies, conf.int=TRUE, pval=TRUE, risk.table=TRUE, legend.title="Genet",  title="Kaplan-Meier Curve for Genet Survival", risk.table.height=2)
+survplot3
+
+ggsave("../figures/survplot3.png", plot = survplot3, height = 25, width = 20, units = "cm", dpi = 300)
+
+#Cox Regression by species
+#MCAV
+coloniesMCAV <- colonies %>% filter(Species == "MCAV")
+fit1 <- coxph(Surv(MonitoringInterval, Status)~Region + GenotypeID, data=coloniesMCAV)
+fit1
+fit1.2 <- coxph(Surv(MonitoringInterval, Status)~Region, data=coloniesMCAV)
+fit1.2
+summary(fit1.2)
+survdiff(Surv(MonitoringInterval, Status)~Region, data=coloniesMCAV)
+#perform the Bonferroni post-hoc test
+pairwise.t.test(coloniesMCAV$Status, coloniesMCAV$Region, p.adj='bonferroni')
+
+#OFAV
+coloniesOFAV <- colonies %>% filter(Species == "OFAV")
+fit2 <- coxph(Surv(MonitoringInterval, Status)~GenotypeID + Region, data=coloniesOFAV)
+fit2
+fit2.2 <- coxph(Surv(MonitoringInterval, Status)~Region, data=coloniesOFAV)
+fit2.2
+summary(fit2.2)
+survdiff(Surv(MonitoringInterval, Status)~Region, data=coloniesOFAV)
+#perform the Bonferroni post-hoc test
+pairwise.t.test(coloniesOFAV$Status, coloniesOFAV$Region, p.adj='bonferroni')
+
+#PCLI
+coloniesPCLI <- colonies %>% filter(Species == "PCLI")
+fit3 <- coxph(Surv(MonitoringInterval, Status)~GenotypeID + Region, data=coloniesPCLI)
+fit3
+fit3.2 <- coxph(Surv(MonitoringInterval, Status)~Region, data=coloniesPCLI)
+fit3.2
+summary(fit3.2)
+survdiff(Surv(MonitoringInterval, Status)~Region, data=coloniesPCLI)
+#perform the Bonferroni post-hoc test
+pairwise.t.test(coloniesPCLI$Status, coloniesPCLI$Region, p.adj='bonferroni')
+
+```
+
+Survival GLM
+
+```{r}
+colonies2 = read.csv("../csv/FINALRenamed_Genotypes_RT_Survey_OUTPLANTS_M1_M15_FOR DEP_FAU.csv")
+colonies2 <- colonies2 %>% dplyr::select(Status, Species, GenotypeID, RegionSite)
+colonies2$RegionSite <- as.numeric(colonies2$RegionSite)
+colonies2["Status"][colonies2["Status"] == "dead"] <- 1
+colonies2["Status"][colonies2["Status"] == "alive"] <- 0
+colonies2["Status"][colonies2["Status"] == "missing"] <- NA
+colonies2 %>% drop_na(Status)
+colonies2$Status <- as.numeric(colonies2$Status)
+coloniesMCAV <- colonies2 %>% filter(Species == "MCAV")
+coloniesOFAV <- colonies2 %>% filter(Species == "OFAV")
+coloniesPCLI <- colonies2 %>% filter(Species == "PCLI")
+
+```
+*Disease Curves*
+
+```{r}
+library(survival)
+
+colonies = read.csv("../csv/FINALRenamed_Genotypes_RT_Survey_OUTPLANTS_M1_M15_FOR DEP_FAU.csv")
+
+colonies$MonitoringInterval <- as.numeric(colonies$MonitoringInterval)
+colonies["DiseaseCondition"][colonies["DiseaseCondition"] == "STL"] <- 1
+colonies$DiseaseCondition[colonies$DiseaseCondition==""]<-"0"
+colonies["DiseaseCondition"][colonies["DiseaseCondition"] == "UNK"] <- NA
+colonies["DiseaseCondition"][colonies["DiseaseCondition"] == "DSD"] <- NA
+colonies %>% drop_na(DiseaseCondition)
+colonies$DiseaseCondition <- as.numeric(colonies$DiseaseCondition)
+d <- Surv(colonies$MonitoringInterval, colonies$DiseaseCondition)
+class(d)
+d
+head(colonies)
+
+#fit curve
+survfit(d~1)
+survfit(Surv(MonitoringInterval, DiseaseCondition)~1, data=colonies)
+dfit <- survfit(Surv(MonitoringInterval, DiseaseCondition)~1, data=colonies)
+dfit
+#fit curves separately by genet
+dfit <- survfit(Surv(MonitoringInterval, DiseaseCondition)~GenotypeID, data=colonies)
+dfit
+summary(dfit)
+plot(dfit)
+```
+use ggplot
+
+```{r}
+library(survminer)
+ggsurvplot(dfit)
+
+ggsurvplot(dfit, conf.int=TRUE, pval=TRUE, risk.table=TRUE, 
+          legend.title="Disease",  
+           title="Kaplan-Meier Curve for Genet Disease Status", 
+           risk.table.height=2)
+
+#facet by Species
+dzplot <- ggsurvplot_facet(dfit, facet.by = "Species", data = colonies, conf.int=TRUE, pval=TRUE, risk.table=TRUE, 
+           legend.title="Genet",  
+           title="Kaplan-Meier Curve for Genet Survival", 
+           risk.table.height=2) + ylab("Disease Probability") + xlab("Month")
+dzplot
+summary(dzplot)
+
+ggsave("../figures/dzplot.png", plot = dzplot, height = 25, width = 20, units = "cm", dpi = 300)
+
+#Cox Regression by species
+#MCAV
+coloniesMCAV <- colonies %>% filter(Species == "MCAV")
+dfit1 <- coxph(Surv(MonitoringInterval, DiseaseCondition)~GenotypeID + Region, data=coloniesMCAV)
+dfit1
+dfit1.2 <- coxph(Surv(MonitoringInterval, DiseaseCondition)~Region, data=coloniesMCAV)
+dfit1.2
+summary(dfit1.2)
+survdiff(Surv(MonitoringInterval, DiseaseCondition)~Region, data=coloniesMCAV)
+#perform the Bonferroni post-hoc test
+pairwise.t.test(coloniesMCAV$DiseaseCondition, coloniesMCAV$Region, p.adj='bonferroni')
+
+
+#OFAV
+coloniesOFAV <- colonies %>% filter(Species == "OFAV")
+dfit2 <- coxph(Surv(MonitoringInterval, DiseaseCondition)~GenotypeID + Region, data=coloniesOFAV)
+dfit2
+dfit2.2 <- coxph(Surv(MonitoringInterval, DiseaseCondition)~Region, data=coloniesOFAV)
+dfit2.2
+summary(dfit2.2)
+survdiff(Surv(MonitoringInterval, DiseaseCondition)~Region, data=coloniesOFAV)
+#perform the Bonferroni post-hoc test
+PWOFAV <- pairwise.t.test(coloniesOFAV$DiseaseCondition, coloniesOFAV$Region, p.adj='bonferroni')
+PWOFAV
+
+
+#PCLI
+coloniesPCLI <- colonies %>% filter(Species == "PCLI")
+dfit3 <- coxph(Surv(MonitoringInterval, DiseaseCondition)~GenotypeID + Region, data=coloniesPCLI)
+dfit3
+dfit3.2 <- coxph(Surv(MonitoringInterval, DiseaseCondition)~Region, data=coloniesPCLI)
+dfit3.2
+summary(dfit2.2)
+survdiff(Surv(MonitoringInterval, DiseaseCondition)~Region, data=coloniesPCLI)
+#perform the Bonferroni post-hoc test
+pairwise.t.test(coloniesPCLI$DiseaseCondition, coloniesPCLI$Region, p.adj='bonferroni')
+
+#facet by Region
+dzplot2 <- ggsurvplot_facet(dfit, facet.by = "Region", data = colonies, conf.int=TRUE, pval=TRUE, risk.table=TRUE, legend.title="Genet",  title="Kaplan-Meier Curve for Genet Disease Status", risk.table.height=2)
+dzplot2
+
+
+```
+*Disease Curves by SOURCE*
+
+```{r}
+library(survival)
+
+colonies = read.csv("../csv/FINALRenamed_Genotypes_RT_Survey_OUTPLANTS_M1_M15_FOR DEP_FAU.csv")
+
+colonies["ColonySource"][colonies["ColonySource"] == "MOTE"] <- "MML"
+colonies$MonitoringInterval <- as.numeric(colonies$MonitoringInterval)
+colonies["DiseaseCondition"][colonies["DiseaseCondition"] == "STL"] <- 1
+colonies$DiseaseCondition[colonies$DiseaseCondition==""]<-"0"
+colonies["DiseaseCondition"][colonies["DiseaseCondition"] == "UNK"] <- NA
+colonies["DiseaseCondition"][colonies["DiseaseCondition"] == "DSD"] <- NA
+colonies %>% drop_na(DiseaseCondition)
+colonies$DiseaseCondition <- as.numeric(colonies$DiseaseCondition)
+#
+colonies = read.csv("../csv/FINALRenamed_Genotypes_RT_Survey_OUTPLANTS_M1_M15_FOR DEP_FAU.csv")
+colonies <- colonies %>% dplyr::select(Status, Species, GenotypeID, RegionSite)
+colonies$RegionSite <- as.numeric(colonies$RegionSite)
+colonies["Status"][colonies["Status"] == "dead"] <- 1
+colonies["Status"][colonies["Status"] == "alive"] <- 0
+colonies["Status"][colonies["Status"] == "missing"] <- NA
+colonies %>% drop_na(Status)
+colonies$Status <- as.numeric(colonies$Status)
+coloniesMCAV <- colonies %>% filter(Species == "MCAV")
+coloniesOFAV <- colonies %>% filter(Species == "OFAV")
+coloniesPCLI <- colonies %>% filter(Species == "PCLI")
+#
+d <- Surv(colonies$MonitoringInterval, colonies$DiseaseCondition)
+class(d)
+d
+head(colonies)
+
+#fit curve
+survfit(d~1)
+survfit(Surv(MonitoringInterval, DiseaseCondition)~1, data=colonies)
+dfit <- survfit(Surv(MonitoringInterval, DiseaseCondition)~1, data=colonies)
+dfit
+#fit curves separately by genet
+dfit <- survfit(Surv(MonitoringInterval, DiseaseCondition)~ColonySource, data=colonies)
+dfit
+summary(dfit)
+plot(dfit)
+
+#facet by Species
+dzplot <- ggsurvplot_facet(dfit, facet.by = "Species", data = colonies, conf.int=TRUE, pval=TRUE, risk.table=TRUE, 
+           legend.title="Colony Source",  
+           title="Kaplan-Meier Curve for Survival", 
+           risk.table.height=2)
+dzplot
+summary(dzplot)
+
+ggsave("../figures/dzplot.png", plot = dzplot, height = 15, width = 15, units = "cm", dpi = 300)
+```
+
+*Survivorship Curves by SOURCE*
+
+```{r}
+library(survival)
+colonies$Status <- as.numeric(colonies$Status)
+
+#fit curve
+survfit(s~1)
+survfit(Surv(MonitoringInterval, Status)~1, data=colonies)
+sfit <- survfit(Surv(MonitoringInterval, Status)~1, data=colonies)
+sfit
+#fit curves separately by genet
+sfit <- survfit(Surv(MonitoringInterval, Status)~ColonySource, data=colonies)
+sfit
+summary(sfit)
+plot(sfit)
+
+#facet by Species
+survSourceplot <- ggsurvplot_facet(sfit, facet.by = "Species", data = colonies, conf.int=TRUE, pval=TRUE, risk.table=TRUE, 
+           legend.title="Colony Source",  
+           title="Kaplan-Meier Curve for Survival", 
+           risk.table.height=2)
+survSourceplot
+summary(survSourceplot)
+
+ggsave("../figures/survSourceplot.png", plot = survSourceplot, height = 25, width = 20, units = "cm", dpi = 300)
+```
+
+Cox Regression
+```{r}
+#Cox Regression by species
+#MCAV
+coloniesMCAV <- colonies %>% filter(Species == "MCAV")
+dfit1 <- coxph(Surv(MonitoringInterval, Status)~ColonySource, data=coloniesMCAV)
+dfit1
+summary(dfit1)
+survdiff(Surv(MonitoringInterval, Status)~ColonySource, data=coloniesMCAV)
+#perform the Bonferroni post-hoc test
+pairwise.t.test(coloniesMCAV$Status, coloniesMCAV$ColonySource, p.adj='bonferroni')
+
+
+#OFAV
+coloniesOFAV <- colonies %>% filter(Species == "OFAV")
+dfit2 <- coxph(Surv(MonitoringInterval, Status)~ColonySource, data=coloniesOFAV)
+dfit2
+summary(dfit2)
+survdiff(Surv(MonitoringInterval, Status)~ColonySource, data=coloniesOFAV)
+#perform the Bonferroni post-hoc test
+PWOFAV <- pairwise.t.test(coloniesOFAV$Status, coloniesOFAV$ColonySource, p.adj='bonferroni')
+PWOFAV
+
+
+#PCLI
+coloniesPCLI <- colonies %>% filter(Species == "PCLI")
+dfit3 <- coxph(Surv(MonitoringInterval, Status)~ColonySource, data=coloniesPCLI)
+dfit3
+summary(dfit3)
+survdiff(Surv(MonitoringInterval, Status)~ColonySource, data=coloniesPCLI)
+#perform the Bonferroni post-hoc test
+pairwise.t.test(coloniesPCLI$Status, coloniesPCLI$ColonySource, p.adj='bonferroni')
 ```
 
